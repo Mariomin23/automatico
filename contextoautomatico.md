@@ -13,14 +13,14 @@ Nivel técnico actual: sé lo que hago en JavaScript/Node/React pero soy junior.
 Una herramienta CLI en Node.js que automatiza mi búsqueda de trabajo:
 
 1. Scraping de ofertas en Tecnoempleo y Google Jobs (portales públicos, sin login)
-2. Puntuación de cada oferta con Claude API según mi perfil técnico
+2. Puntuación de cada oferta con IA local (Ollama) según mi perfil técnico
 3. Generación de carta de presentación personalizada para las ofertas con puntuación >= 7
 4. Output diario en Markdown: resumen de ofertas + cartas listas para copiar y pegar
 5. Envío del resumen por email (opcional, con nodemailer)
 
 ---
 
-## Mi perfil técnico (para los prompts de Claude API)
+## Mi perfil técnico (para los prompts de IA)
 
 ```javascript
 {
@@ -30,7 +30,7 @@ Una herramienta CLI en Node.js que automatiza mi búsqueda de trabajo:
   stack: {
     principales: ["Node.js", "React", "Angular", "MongoDB", "JavaScript", "TypeScript"],
     secundarios: ["HTML5", "CSS3", "REST APIs", "JWT", "Express", "Git"],
-    aprendiendo: ["Claude API", "MCP", "automatizaciones con IA"]
+    aprendiendo: ["Ollama", "MCP", "automatizaciones con IA"]
   },
   formacion: "Bootcamp Fullstack Neoland 2026 — mejor proyecto de la promoción",
   experiencia_previa: "5 años autónomo. Manager & Franchisee en TRIB3 Goya (fitness). P&L, equipo, KPIs.",
@@ -50,12 +50,16 @@ Una herramienta CLI en Node.js que automatiza mi búsqueda de trabajo:
 
 - **Runtime:** Node.js 18+
 - **Scraping:** axios + cheerio (páginas estáticas), playwright (páginas con JS dinámico)
-- **IA:** @anthropic-ai/sdk — modelo `claude-sonnet-4-20250514`
+- **IA:** Ollama corriendo en local — modelo `llama3.2` o `mistral` (gratis, sin coste por llamada)
+- **Cliente HTTP para Ollama:** axios (ya está en el proyecto, no hace falta SDK extra)
 - **Config:** dotenv para variables de entorno
 - **Email:** nodemailer (opcional)
 - **Dev:** nodemon
 
 Sin frameworks de servidor. Solo scripts CLI que puedo leer y entender.
+
+> **Por qué Ollama:** Es gratuito, corre en tu máquina, no necesita API key ni tarjeta de crédito.
+> El usuario debe tener Ollama instalado (`https://ollama.com`) y el modelo descargado (`ollama pull llama3.2`).
 
 ---
 
@@ -97,13 +101,26 @@ job-hunter-ai/
 - Las credenciales SIEMPRE van en `.env`, nunca hardcodeadas
 - `.env` va en `.gitignore` siempre
 - Usa `dotenv` con `require('dotenv').config()` al inicio de `src/index.js`
+- No se necesita API key para Ollama — corre en local en `http://localhost:11434`
 
-### Llamadas a Claude API
-- Modelo siempre: `claude-sonnet-4-20250514`
-- `max_tokens: 1024` para puntuaciones, `max_tokens: 2048` para cartas
+### Llamadas a Ollama
+- URL base: `http://localhost:11434/api/generate`
+- Modelo por defecto: `llama3.2` (configurable via `.env` como `OLLAMA_MODEL`)
 - SIEMPRE envuelve las llamadas en try/catch
-- Si Claude devuelve JSON, usa JSON.parse dentro de try/catch con fallback
-- No hagas más de 1 llamada a la API por segundo (añade un sleep entre llamadas)
+- Si Ollama devuelve JSON, usa JSON.parse dentro de try/catch con fallback
+- No hagas más de 1 llamada por segundo (añade un sleep entre llamadas)
+- Si Ollama no está corriendo, lanza un error claro: `"Error: Ollama no está activo. Ejecuta 'ollama serve' primero."`
+- Usa `stream: false` en todas las llamadas para recibir la respuesta completa de una vez
+
+Ejemplo de llamada a Ollama:
+```javascript
+const response = await axios.post('http://localhost:11434/api/generate', {
+  model: process.env.OLLAMA_MODEL || 'llama3.2',
+  prompt: tuPrompt,
+  stream: false
+});
+const texto = response.data.response;
+```
 
 ### Scraping
 - No más de 1 petición por segundo a cada portal (setTimeout entre requests)
@@ -131,7 +148,7 @@ job-hunter-ai/
 
 ---
 
-## Prompts para Claude API
+## Prompts para Ollama
 
 ### Prompt de puntuación (scorer.js)
 
@@ -191,7 +208,10 @@ Escribe SOLO la carta, sin asunto, sin fecha, sin "Estimado/a". Solo el cuerpo d
 
 ```
 # .env
-ANTHROPIC_API_KEY=sk-ant-...
+
+# Ollama (sin coste, corre en local)
+OLLAMA_MODEL=llama3.2
+OLLAMA_BASE_URL=http://localhost:11434
 
 # Email (opcional)
 EMAIL_FROM=mario@minuesa.es
@@ -208,17 +228,30 @@ MIN_SCORE_FOR_LETTER=7
 
 ---
 
+## Prerequisitos para el usuario
+
+Antes de ejecutar el proyecto, Mario debe:
+
+1. Instalar Ollama: https://ollama.com/download
+2. Descargar el modelo: `ollama pull llama3.2`
+3. Asegurarse de que Ollama está corriendo: `ollama serve` (o que arranca automáticamente)
+
+El script debe verificar al inicio que Ollama responde en `http://localhost:11434` y si no, mostrar un error claro con las instrucciones anteriores.
+
+---
+
 ## Comportamiento esperado al ejecutar `npm start`
 
 ```
 [07:00] Iniciando job-hunter-ai...
+[07:00] Verificando Ollama (llama3.2)... OK
 [07:00] Cargando ofertas ya vistas: 34 registros
 [07:00] Scraping Tecnoempleo...
 [07:01] Tecnoempleo: 12 ofertas encontradas, 4 nuevas
 [07:01] Scraping Google Jobs...
 [07:02] Google Jobs: 8 ofertas encontradas, 3 nuevas
 [07:02] Total ofertas nuevas: 7
-[07:02] Puntuando ofertas con Claude API...
+[07:02] Puntuando ofertas con Ollama (llama3.2)...
 [07:02] → Empresa ABC: 9/10 ✅
 [07:03] → Empresa DEF: 8/10 ✅
 [07:03] → Empresa GHI: 4/10 ❌
@@ -240,11 +273,12 @@ MIN_SCORE_FOR_LETTER=7
 
 - No uses ESModules (`import/export`) — solo CommonJS
 - No instales paquetes que no estén en la lista del stack salvo que me lo expliques primero
-- No hagas llamadas a la API sin rate limiting
-- No hardcodees credenciales bajo ningún concepto
+- No hagas llamadas a Ollama sin rate limiting
+- No hardcodees credenciales ni URLs bajo ningún concepto
 - No crees archivos de configuración adicionales sin decirme para qué sirven
 - No uses `console.log` para todo — usa un logger simple con prefijo de hora `[HH:MM]`
-- No continues si `ANTHROPIC_API_KEY` no está definida — lanza un error claro al arrancar
+- No continues si Ollama no está disponible — lanza un error claro al arrancar
+- No uses la Anthropic API ni ninguna API de pago
 
 ---
 
@@ -260,8 +294,8 @@ Construye el proyecto en este orden:
 6. `src/scraper/googlejobs.js` — scraper básico
 7. `src/scraper/index.js` — orquesta ambos scrapers
 8. `src/ai/prompts.js` — todos los prompts centralizados
-9. `src/ai/scorer.js` — puntuación con Claude API
-10. `src/ai/letterWriter.js` — generación de cartas
+9. `src/ai/scorer.js` — puntuación con Ollama
+10. `src/ai/letterWriter.js` — generación de cartas con Ollama
 11. `src/utils/output.js` — genera el resumen Markdown
 12. `src/utils/mailer.js` — envío por email (opcional)
 13. `src/index.js` — punto de entrada, orquesta todo
