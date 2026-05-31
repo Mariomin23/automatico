@@ -50,32 +50,75 @@ app.get('/api/runs/:date/carta/:slug', (req, res) => {
   res.json({ carta });
 });
 
-// Genera carta de presentación bajo demanda con Ollama
+// Genera carta con streaming SSE — el cliente ve tokens en tiempo real
 app.post('/api/carta/generar', async (req, res) => {
-  const { titulo, empresa, descripcion, url } = req.body;
+  const { titulo, empresa, descripcion, url, date, slug } = req.body;
   if (!titulo || !empresa) return res.status(400).json({ error: 'Faltan datos de la oferta' });
 
-  const { generarCarta } = require('./ai/letterWriter');
-  const carta = await generarCarta({ titulo, empresa, descripcion: descripcion || '', url: url || '' });
+  const axios = require('axios');
+  const { promptCarta } = require('./ai/prompts');
+  const ollamaUrl = `${process.env.OLLAMA_BASE_URL || 'http://localhost:11434'}/api/generate`;
+  const modelo = process.env.OLLAMA_MODEL || 'llama3';
 
-  if (!carta) return res.status(500).json({ error: 'Ollama no pudo generar la carta. ¿Está activo?' });
+  res.setHeader('Content-Type', 'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache');
+  res.setHeader('Connection', 'keep-alive');
 
-  // Guarda la carta si tenemos la fecha del run
-  const { date, slug } = req.body;
-  if (date && slug) {
-    const fs = require('fs');
-    const path = require('path');
-    const carpeta = path.join(OUTPUT_DIR, date);
-    if (fs.existsSync(carpeta)) {
-      fs.writeFileSync(
-        path.join(carpeta, `${slug}_carta.md`),
-        `# Carta para ${empresa}\n\n_${titulo}_\n\n---\n\n${carta}\n`,
-        'utf-8'
-      );
-    }
+  const send = (data) => res.write(`data: ${JSON.stringify(data)}\n\n`);
+
+  let stream;
+  try {
+    stream = await axios.post(ollamaUrl, {
+      model: modelo,
+      prompt: promptCarta({ titulo, empresa, descripcion: descripcion || '', url: url || '' }),
+      stream: true,
+    }, { responseType: 'stream', timeout: 300000 });
+  } catch (err) {
+    send({ error: 'Ollama no responde. ¿Está activo?' });
+    return res.end();
   }
 
-  res.json({ carta });
+  let cartaCompleta = '';
+  let buffer = '';
+
+  stream.data.on('data', (chunk) => {
+    buffer += chunk.toString();
+    const lineas = buffer.split('\n');
+    buffer = lineas.pop(); // guarda línea incompleta
+
+    for (const linea of lineas) {
+      if (!linea.trim()) continue;
+      try {
+        const json = JSON.parse(linea);
+        if (json.response) {
+          cartaCompleta += json.response;
+          send({ token: json.response });
+        }
+        if (json.done) {
+          // Guarda la carta en disco
+          if (date && slug) {
+            const carpeta = path.join(OUTPUT_DIR, date);
+            if (fs.existsSync(carpeta)) {
+              fs.writeFileSync(
+                path.join(carpeta, `${slug}_carta.md`),
+                `# Carta para ${empresa}\n\n_${titulo}_\n\n---\n\n${cartaCompleta}\n`,
+                'utf-8'
+              );
+            }
+          }
+          send({ done: true });
+          res.end();
+        }
+      } catch { /* línea JSON incompleta, ignorar */ }
+    }
+  });
+
+  stream.data.on('error', () => {
+    send({ error: 'Error de conexión con Ollama' });
+    res.end();
+  });
+
+  req.on('close', () => stream.data.destroy());
 });
 
 // Estado de Ollama

@@ -171,9 +171,7 @@ async function generarCarta(idx, date) {
 
   btn.textContent = '⏳ Generando...';
   btn.disabled = true;
-  container.innerHTML = '<p class="carta-loading">Ollama escribiendo la carta (~1 min)...</p>';
 
-  // Recoge datos de la oferta del estado guardado
   const oferta = runData[date]?.ofertas[idx];
   if (!oferta) {
     container.innerHTML = '<p class="carta-loading">Error: oferta no encontrada</p>';
@@ -182,10 +180,25 @@ async function generarCarta(idx, date) {
     return;
   }
 
+  const nombreFichero = `carta_${oferta.slug}.txt`;
+  const controller = new AbortController();
+
+  container.innerHTML = `
+    <div class="carta-box" id="carta-text-${idx}"></div>
+    <div style="margin-top:8px">
+      <button class="btn" id="btn-detener-${idx}" onclick="detenerCarta(${idx})" style="color:var(--red);border-color:var(--red)">⏹ Detener</button>
+    </div>
+  `;
+  const cartaEl = document.getElementById(`carta-text-${idx}`);
+
+  // Guarda el controller para poder abortar desde el botón
+  cartaEl._controller = controller;
+
   try {
     const res = await fetch('/api/carta/generar', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
+      signal: controller.signal,
       body: JSON.stringify({
         titulo: oferta.titulo,
         empresa: oferta.empresa,
@@ -196,33 +209,91 @@ async function generarCarta(idx, date) {
       }),
     });
 
-    if (!res.ok) {
-      const err = await res.json();
-      throw new Error(err.error || `HTTP ${res.status}`);
-    }
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
 
-    const data = await res.json();
-    container.innerHTML = `
-      <div class="carta-box">${escapeHtml(data.carta)}</div>
-      <button class="btn" style="margin-top:8px" onclick="copyCarta(${idx})">📋 Copiar</button>
-    `;
-    btn.textContent = '✉️ Ocultar carta';
-    btn.disabled = false;
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+
+      buffer += decoder.decode(value, { stream: true });
+      const lineas = buffer.split('\n');
+      buffer = lineas.pop();
+
+      for (const linea of lineas) {
+        if (!linea.startsWith('data: ')) continue;
+        const msg = JSON.parse(linea.slice(6));
+
+        if (msg.error) throw new Error(msg.error);
+
+        if (msg.token) {
+          cartaEl.textContent += msg.token;
+          cartaEl.scrollTop = cartaEl.scrollHeight;
+        }
+
+        if (msg.done) {
+          // Reemplaza botón Detener por Copiar + Descargar
+          document.getElementById(`btn-detener-${idx}`)?.parentElement.remove();
+          container.insertAdjacentHTML('beforeend', `
+            <div style="display:flex;gap:8px;margin-top:8px">
+              <button class="btn" onclick="copyCarta(${idx})">📋 Copiar</button>
+              <button class="btn" onclick="descargarCarta(${idx}, '${nombreFichero}')">⬇️ Descargar .txt</button>
+            </div>
+          `);
+          btn.textContent = '✉️ Ocultar carta';
+          btn.disabled = false;
+        }
+      }
+    }
   } catch (err) {
-    container.innerHTML = `<p class="carta-loading" style="color:var(--red)">Error: ${escapeHtml(err.message)}</p>`;
+    if (err.name === 'AbortError') {
+      // Generación detenida por el usuario — deja el texto parcial visible
+      document.getElementById(`btn-detener-${idx}`)?.parentElement.remove();
+      if (cartaEl.textContent.trim()) {
+        container.insertAdjacentHTML('beforeend', `
+          <p class="carta-loading" style="color:var(--orange)">Detenido. Texto parcial guardado.</p>
+          <div style="display:flex;gap:8px;margin-top:8px">
+            <button class="btn" onclick="copyCarta(${idx})">📋 Copiar parcial</button>
+            <button class="btn" onclick="descargarCarta(${idx}, '${nombreFichero}')">⬇️ Descargar .txt</button>
+          </div>
+        `);
+      }
+    } else {
+      container.innerHTML = `<p class="carta-loading" style="color:var(--red)">Error: ${escapeHtml(err.message)}</p>`;
+    }
     btn.textContent = '✉️ Generar carta de presentación';
     btn.disabled = false;
   }
 }
 
+function detenerCarta(idx) {
+  const cartaEl = document.getElementById(`carta-text-${idx}`);
+  if (cartaEl?._controller) cartaEl._controller.abort();
+}
+
 function copyCarta(idx) {
-  const box = document.querySelector(`#carta-${idx} .carta-box`);
+  const box = document.getElementById(`carta-text-${idx}`);
   if (!box) return;
   navigator.clipboard.writeText(box.textContent).then(() => {
     const btn = document.querySelector(`#carta-${idx} .btn`);
     btn.textContent = '✅ Copiado';
     setTimeout(() => { btn.textContent = '📋 Copiar'; }, 2000);
   });
+}
+
+function descargarCarta(idx, nombre) {
+  const box = document.getElementById(`carta-text-${idx}`);
+  if (!box) return;
+  const blob = new Blob([box.textContent], { type: 'text/plain;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = nombre;
+  a.click();
+  URL.revokeObjectURL(url);
 }
 
 // ── Nueva búsqueda con logs en vivo ───────────────────────────────────────────
