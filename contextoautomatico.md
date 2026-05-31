@@ -10,13 +10,22 @@ Nivel técnico actual: sé lo que hago en JavaScript/Node/React pero soy junior.
 
 ## Qué estamos construyendo
 
-Una herramienta CLI en Node.js que automatiza mi búsqueda de trabajo:
+Una herramienta con dos modos de uso:
 
-1. Scraping de ofertas en Tecnoempleo y Google Jobs (portales públicos, sin login)
-2. Puntuación de cada oferta con IA local (Ollama) según mi perfil técnico
-3. Generación de carta de presentación personalizada para las ofertas con puntuación >= 7
-4. Output diario en Markdown: resumen de ofertas + cartas listas para copiar y pegar
-5. Envío del resumen por email (opcional, con nodemailer)
+### `npm start` — scraping CLI
+1. Scraping de ofertas en Tecnoempleo (portal público, sin login)
+2. Filtro de ofertas ya vistas (`data/seen_jobs.json`)
+3. Output diario en Markdown + JSON: resumen de ofertas
+4. Envío del resumen por email (opcional, con nodemailer)
+
+> **No hay puntuación automática.** Ollama consume demasiados recursos para puntuar 20 ofertas seguidas. La puntuación y cartas son bajo demanda desde el dashboard.
+
+### `npm run serve` — dashboard web
+1. Servidor Express en `http://localhost:3000`
+2. Historial de runs por fecha en sidebar
+3. Ofertas ordenadas por experiencia requerida (sin exp → junior → mid → senior)
+4. Botón **"Generar carta de presentación"** por oferta — llama a Ollama solo cuando se pulsa
+5. Botón **"Nueva búsqueda"** con logs en tiempo real (SSE)
 
 ---
 
@@ -49,48 +58,71 @@ Una herramienta CLI en Node.js que automatiza mi búsqueda de trabajo:
 ## Stack del proyecto
 
 - **Runtime:** Node.js 18+
-- **Scraping:** axios + cheerio (páginas estáticas), playwright (páginas con JS dinámico)
-- **IA:** Ollama corriendo en local — modelo `llama3.2` o `mistral` (gratis, sin coste por llamada)
-- **Cliente HTTP para Ollama:** axios (ya está en el proyecto, no hace falta SDK extra)
+- **Scraping:** axios + cheerio (páginas estáticas)
+- **IA:** Ollama corriendo en local — modelo `llama3` (el disponible; configurable via `OLLAMA_MODEL`)
+- **Cliente HTTP para Ollama:** axios
+- **Servidor web:** Express (solo para el dashboard, no para el scraping CLI)
 - **Config:** dotenv para variables de entorno
 - **Email:** nodemailer (opcional)
 - **Dev:** nodemon
 
-Sin frameworks de servidor. Solo scripts CLI que puedo leer y entender.
+CommonJS en todo el proyecto. Sin ESModules.
+
+> **Google Jobs (Playwright) está deshabilitado por defecto.** Requiere `npx playwright install chromium` (~400MB). Si no está instalado, el scraper devuelve array vacío sin romper el flujo.
 
 > **Por qué Ollama:** Es gratuito, corre en tu máquina, no necesita API key ni tarjeta de crédito.
-> El usuario debe tener Ollama instalado (`https://ollama.com`) y el modelo descargado (`ollama pull llama3.2`).
+> Modelo actual en uso: `llama3` (no `llama3.2` — verificar con `ollama list` qué modelos tienes).
 
 ---
 
-## Estructura de archivos que debes crear
+## Estructura de archivos
 
 ```
 job-hunter-ai/
 ├── src/
 │   ├── scraper/
-│   │   ├── tecnoempleo.js
-│   │   ├── googlejobs.js
+│   │   ├── tecnoempleo.js      ← axios + cheerio, selectores actualizados, 2 páginas por keyword
+│   │   ├── googlejobs.js       ← deshabilitado por defecto (necesita playwright install)
 │   │   └── index.js
 │   ├── ai/
-│   │   ├── scorer.js
-│   │   ├── letterWriter.js
+│   │   ├── scorer.js           ← NO se usa en el flujo principal; disponible para uso futuro
+│   │   ├── letterWriter.js     ← generarCarta() y generarCartas() exportadas
 │   │   └── prompts.js
 │   ├── utils/
 │   │   ├── storage.js
-│   │   ├── output.js
+│   │   ├── output.js           ← genera resumen.md + resumen.json (sin campos de puntuación)
 │   │   └── mailer.js
 │   ├── config/
 │   │   └── profile.js
-│   └── index.js
+│   ├── index.js                ← CLI: solo scraping + output, sin Ollama
+│   └── server.js               ← dashboard Express en puerto 3000
+├── public/
+│   ├── index.html
+│   ├── style.css
+│   └── app.js                  ← SPA vanilla JS, sin framework, sin build step
 ├── data/
-│   └── .gitkeep
+│   └── seen_jobs.json          ← URLs ya procesadas
 ├── output/
-│   └── .gitkeep
+│   └── YYYY-MM-DD/
+│       ├── resumen.md
+│       ├── resumen.json        ← datos estructurados para el dashboard
+│       └── {empresa_slug}_carta.md   ← generadas bajo demanda
+├── .env
 ├── .env.example
 ├── .gitignore
 ├── package.json
 └── README.md
+```
+
+---
+
+## Scripts disponibles
+
+```bash
+npm start          # scraping CLI — genera output, sin Ollama
+npm run dev        # scraping CLI con nodemon
+npm run serve      # dashboard web en http://localhost:3000
+npm run serve:dev  # dashboard con nodemon
 ```
 
 ---
@@ -100,44 +132,75 @@ job-hunter-ai/
 ### Credenciales
 - Las credenciales SIEMPRE van en `.env`, nunca hardcodeadas
 - `.env` va en `.gitignore` siempre
-- Usa `dotenv` con `require('dotenv').config()` al inicio de `src/index.js`
+- Usa `dotenv` con `require('dotenv').config()` al inicio de cada entry point
 - No se necesita API key para Ollama — corre en local en `http://localhost:11434`
 
 ### Llamadas a Ollama
 - URL base: `http://localhost:11434/api/generate`
-- Modelo por defecto: `llama3.2` (configurable via `.env` como `OLLAMA_MODEL`)
+- Modelo por defecto: `llama3` (configurable via `.env` como `OLLAMA_MODEL`)
 - SIEMPRE envuelve las llamadas en try/catch
-- Si Ollama devuelve JSON, usa JSON.parse dentro de try/catch con fallback
-- No hagas más de 1 llamada por segundo (añade un sleep entre llamadas)
-- Si Ollama no está corriendo, lanza un error claro: `"Error: Ollama no está activo. Ejecuta 'ollama serve' primero."`
-- Usa `stream: false` en todas las llamadas para recibir la respuesta completa de una vez
+- Si Ollama devuelve JSON, usa JSON.parse dentro de try/catch con fallback regex
+- No hagas más de 1 llamada por segundo (sleep 1100ms entre llamadas en bucles)
+- Usa `stream: false` en todas las llamadas
 
-Ejemplo de llamada a Ollama:
 ```javascript
-const response = await axios.post('http://localhost:11434/api/generate', {
-  model: process.env.OLLAMA_MODEL || 'llama3.2',
+const response = await axios.post(`${process.env.OLLAMA_BASE_URL || 'http://localhost:11434'}/api/generate`, {
+  model: process.env.OLLAMA_MODEL || 'llama3',
   prompt: tuPrompt,
-  stream: false
+  stream: false,
 });
 const texto = response.data.response;
 ```
 
-### Scraping
-- No más de 1 petición por segundo a cada portal (setTimeout entre requests)
-- Usa User-Agent realista: `'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'`
-- Si el scraping falla, loga el error y continúa con el siguiente portal — no rompas el flujo completo
-- Antes de scrapear, comprueba que la oferta no está ya en `data/seen_jobs.json`
+### Scraping — Tecnoempleo
+- Selector de contenedor de oferta: `.p-3.border.rounded.mb-3.bg-white`
+- Título: `h3 a` dentro del contenedor
+- Empresa: `a.text-primary` (primer match)
+- Descripción: `span.hidden-md-down`
+- URL de búsqueda: `https://www.tecnoempleo.com/busqueda-empleo.php?te={keyword}&provincia=28&pagina={n}`
+- Busca 3 keywords × 2 páginas = hasta ~180 ofertas por run
+- 1200ms de pausa entre peticiones
+- Deduplica por URL antes de devolver resultados
 
 ### Storage
-- `data/seen_jobs.json` guarda un array de IDs/URLs ya procesadas
+- `data/seen_jobs.json` guarda un array de URLs ya procesadas
 - Si el archivo no existe, créalo vacío: `[]`
 - Actualiza el archivo al final de cada ejecución, no durante
 
-### Output
+### Output (sin puntuación)
 - Carpeta `/output/YYYY-MM-DD/` con la fecha de hoy
-- Un archivo `resumen.md` con todas las ofertas y puntuaciones
-- Un archivo por carta: `{empresa_slug}_carta.md`
-- Los slugs en minúsculas sin espacios ni caracteres especiales
+- `resumen.md` — Markdown legible
+- `resumen.json` — datos estructurados para el dashboard con esta forma:
+```json
+{
+  "fecha": "2026-05-31",
+  "total": 20,
+  "ofertas": [
+    {
+      "titulo": "...",
+      "empresa": "...",
+      "url": "...",
+      "fuente": "Tecnoempleo",
+      "descripcion": "...",
+      "slug": "empresa_slug"
+    }
+  ]
+}
+```
+- Cartas: `{empresa_slug}_carta.md` — generadas bajo demanda desde el dashboard
+
+### Dashboard (server.js + public/)
+- Express sirve `public/` como estático
+- API endpoints:
+  - `GET /api/runs` — lista fechas con runs
+  - `GET /api/runs/:date` — datos del run (resumen.json)
+  - `GET /api/runs/:date/carta/:slug` — carta guardada
+  - `POST /api/carta/generar` — genera carta con Ollama bajo demanda
+  - `GET /api/run/start` — SSE: lanza `npm start` y streama logs
+  - `GET /api/status` — estado de Ollama
+- Frontend: vanilla JS, sin framework, sin build step (`public/app.js`)
+- Las ofertas se ordenan por experiencia requerida extraída con regex del título+descripción
+- Badges de experiencia: Sin exp. (verde) · 1 año (azul) · 2-3 años (amarillo) · 4+ años (rojo)
 
 ### Código
 - CommonJS (`require`, `module.exports`) — no ESModules
@@ -148,34 +211,7 @@ const texto = response.data.response;
 
 ---
 
-## Prompts para Ollama
-
-### Prompt de puntuación (scorer.js)
-
-```
-Eres un asistente que evalúa ofertas de trabajo para un desarrollador fullstack junior.
-
-PERFIL DEL CANDIDATO:
-- Stack principal: Node.js, React, Angular, MongoDB, JavaScript, TypeScript
-- Formación: Bootcamp Fullstack Neoland 2026, mejor proyecto de la promoción
-- Diferenciador: 5 años como autónomo gestionando negocio (P&L, KPIs, equipo)
-- Ubicación: Madrid. Acepta presencial, híbrido y remoto.
-- Excluir: ofertas que pidan Java, PHP, perfil senior o más de 3 años de experiencia
-
-OFERTA A EVALUAR:
-{oferta_completa}
-
-Responde ÚNICAMENTE con un objeto JSON válido, sin texto adicional, sin markdown, sin explicaciones fuera del JSON:
-{
-  "puntuacion": <número del 1 al 10>,
-  "apto": <true si puntuacion >= 7, false si no>,
-  "motivo": "<explicación en 2-3 frases de por qué encaja o no>",
-  "keywords_match": ["<tecnologías de la oferta que coinciden con el perfil>"],
-  "alerta": "<si hay algo raro en la oferta como salario muy bajo o requisitos contradictorios, ponlo aquí. Si no hay nada, pon null>"
-}
-```
-
-### Prompt de carta (letterWriter.js)
+## Prompt de carta (letterWriter.js)
 
 ```
 Eres un asistente que escribe cartas de presentación para Mario Minuesa, desarrollador fullstack junior.
@@ -210,7 +246,7 @@ Escribe SOLO la carta, sin asunto, sin fecha, sin "Estimado/a". Solo el cuerpo d
 # .env
 
 # Ollama (sin coste, corre en local)
-OLLAMA_MODEL=llama3.2
+OLLAMA_MODEL=llama3
 OLLAMA_BASE_URL=http://localhost:11434
 
 # Email (opcional)
@@ -223,81 +259,54 @@ EMAIL_SMTP_PASS=xxxx_xxxx_xxxx_xxxx
 
 # Configuración
 MAX_OFFERS_PER_RUN=20
-MIN_SCORE_FOR_LETTER=7
 ```
 
 ---
 
-## Prerequisitos para el usuario
+## Prerequisitos
 
 Antes de ejecutar el proyecto, Mario debe:
 
 1. Instalar Ollama: https://ollama.com/download
-2. Descargar el modelo: `ollama pull llama3.2`
-3. Asegurarse de que Ollama está corriendo: `ollama serve` (o que arranca automáticamente)
+2. Descargar el modelo disponible: `ollama pull llama3` (verificar con `ollama list`)
+3. Asegurarse de que Ollama está corriendo: `ollama serve`
 
-El script debe verificar al inicio que Ollama responde en `http://localhost:11434` y si no, mostrar un error claro con las instrucciones anteriores.
+Ollama solo se necesita para generar cartas desde el dashboard. `npm start` (scraping) no lo requiere.
 
 ---
 
-## Comportamiento esperado al ejecutar `npm start`
+## Comportamiento esperado
 
+### `npm start`
 ```
 [07:00] Iniciando job-hunter-ai...
-[07:00] Verificando Ollama (llama3.2)... OK
 [07:00] Cargando ofertas ya vistas: 34 registros
 [07:00] Scraping Tecnoempleo...
-[07:01] Tecnoempleo: 12 ofertas encontradas, 4 nuevas
+[07:01] Tecnoempleo: 157 ofertas encontradas, 12 nuevas
 [07:01] Scraping Google Jobs...
-[07:02] Google Jobs: 8 ofertas encontradas, 3 nuevas
-[07:02] Total ofertas nuevas: 7
-[07:02] Puntuando ofertas con Ollama (llama3.2)...
-[07:02] → Empresa ABC: 9/10 ✅
-[07:03] → Empresa DEF: 8/10 ✅
-[07:03] → Empresa GHI: 4/10 ❌
-[07:03] → Empresa JKL: 7/10 ✅
-[07:04] → Empresa MNO: 2/10 ❌
-[07:04] → Empresa PQR: 6/10 ❌
-[07:04] → Empresa STU: 8/10 ✅
-[07:04] Generando cartas para 4 ofertas...
-[07:05] Cartas generadas: 4
-[07:05] Resumen guardado en: output/2026-05-31/resumen.md
-[07:06] Email enviado a mario@minuesa.es
-[07:06] seen_jobs.json actualizado: 41 registros
-[07:06] ✅ Completado. 4 candidaturas listas.
+[GoogleJobs] Browsers no instalados. Ejecuta: npx playwright install chromium
+[07:01] Google Jobs: 0 ofertas encontradas, 0 nuevas
+[07:01] Total ofertas nuevas: 12
+[07:01] Resumen guardado en: output/2026-05-31/resumen.md
+[07:01] seen_jobs.json actualizado: 46 registros
+[07:01] ✅ Completado. 12 ofertas guardadas.
 ```
+
+### `npm run serve`
+```
+Dashboard en http://localhost:3000
+```
+Abre el navegador en esa URL. El dashboard carga las ofertas del run más reciente, ordenadas por experiencia.
 
 ---
 
 ## Lo que NO debes hacer
 
 - No uses ESModules (`import/export`) — solo CommonJS
-- No instales paquetes que no estén en la lista del stack salvo que me lo expliques primero
-- No hagas llamadas a Ollama sin rate limiting
+- No instales paquetes nuevos sin explicármelo primero
+- No hagas llamadas a Ollama sin rate limiting en bucles
 - No hardcodees credenciales ni URLs bajo ningún concepto
-- No crees archivos de configuración adicionales sin decirme para qué sirven
-- No uses `console.log` para todo — usa un logger simple con prefijo de hora `[HH:MM]`
-- No continues si Ollama no está disponible — lanza un error claro al arrancar
+- No uses `console.log` para todo — usa logger con prefijo `[HH:MM]`
 - No uses la Anthropic API ni ninguna API de pago
-
----
-
-## Cómo empezar
-
-Construye el proyecto en este orden:
-
-1. `package.json` con todas las dependencias y scripts
-2. `.gitignore` y `.env.example`
-3. `src/config/profile.js` con mi perfil
-4. `src/utils/storage.js` — lectura/escritura de seen_jobs.json
-5. `src/scraper/tecnoempleo.js` — scraper básico
-6. `src/scraper/googlejobs.js` — scraper básico
-7. `src/scraper/index.js` — orquesta ambos scrapers
-8. `src/ai/prompts.js` — todos los prompts centralizados
-9. `src/ai/scorer.js` — puntuación con Ollama
-10. `src/ai/letterWriter.js` — generación de cartas con Ollama
-11. `src/utils/output.js` — genera el resumen Markdown
-12. `src/utils/mailer.js` — envío por email (opcional)
-13. `src/index.js` — punto de entrada, orquesta todo
-
-Crea un archivo cada vez. Antes de pasar al siguiente, asegúrate de que el anterior no tiene errores de sintaxis.
+- No añadas puntuación automática al flujo de `npm start` — consume demasiados recursos
+- No rompas el flujo de scraping si Google Jobs falla — devuelve array vacío y continúa
