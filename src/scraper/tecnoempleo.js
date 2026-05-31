@@ -51,7 +51,7 @@ async function scrapearPagina(keyword, pagina) {
 async function obtenerOfertas(keywords) {
   const todas = [];
 
-  for (const kw of keywords.slice(0, 3)) {
+  for (const kw of keywords.slice(0, 5)) {
     for (let p = 1; p <= PAGINAS; p++) {
       const resultado = await scrapearPagina(kw, p);
       todas.push(...resultado);

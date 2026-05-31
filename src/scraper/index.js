@@ -36,14 +36,24 @@ async function obtenerOfertasNuevas(vistas) {
     console.error(`[Scraper] Google Jobs falló: ${err.message}`);
   }
 
-  // Combina, deduplica por URL y limita al máximo configurado
+  // Combina y deduplica por URL
   const todas = [...ofertasTecno, ...ofertasGoogle];
   const mapa = new Map();
   for (const o of todas) {
     if (!mapa.has(o.url)) mapa.set(o.url, o);
   }
 
-  const resultado = Array.from(mapa.values()).slice(0, maxOfertas);
+  // Filtra por palabras excluidas en título
+  const excluir = profile.busqueda.excluir || [];
+  const filtradas = Array.from(mapa.values()).filter((o) => {
+    const titulo = o.titulo.toLowerCase();
+    return !excluir.some((ex) => titulo.includes(ex.toLowerCase()));
+  });
+
+  const descartadas = mapa.size - filtradas.length;
+  if (descartadas > 0) log(`Filtradas por excluir (${excluir.join(', ')}): ${descartadas} ofertas`);
+
+  const resultado = filtradas.slice(0, maxOfertas);
   log(`Total ofertas nuevas: ${resultado.length}`);
   return resultado;
 }

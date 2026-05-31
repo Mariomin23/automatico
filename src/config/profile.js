@@ -14,7 +14,7 @@ const profile = {
   busqueda: {
     modalidad: ['presencial', 'hibrido', 'remoto'],
     ciudad: 'Madrid',
-    keywords: ['fullstack', 'node', 'react', 'angular', 'javascript', 'junior'],
+    keywords: ['javascript junior', 'react junior', 'node junior', 'angular junior', 'fullstack junior'],
     excluir: ['java', 'php', 'senior', 'lead'],
   },
 };
