@@ -3,35 +3,36 @@ const cheerio = require('cheerio');
 
 const BASE_URL = 'https://www.tecnoempleo.com';
 const HEADERS = {
-  'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+  'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36',
+  'Accept-Language': 'es-ES,es;q=0.9',
 };
+const PAGINAS = 2;
 
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-async function scrapearPagina(keywords) {
-  const query = keywords.join('+');
-  const url = `${BASE_URL}/busqueda-empleo.php?te=${query}&provincia=28`;
+async function scrapearPagina(keyword, pagina) {
+  const url = `${BASE_URL}/busqueda-empleo.php?te=${encodeURIComponent(keyword)}&provincia=28&pagina=${pagina}`;
 
   let html;
   try {
-    const respuesta = await axios.get(url, { headers: HEADERS, timeout: 10000 });
-    html = respuesta.data;
+    const res = await axios.get(url, { headers: HEADERS, timeout: 12000 });
+    html = res.data;
   } catch (err) {
-    console.error(`[Tecnoempleo] Error al scrapear: ${err.message}`);
+    console.error(`[Tecnoempleo] Error "${keyword}" p${pagina}: ${err.message}`);
     return [];
   }
 
   const $ = cheerio.load(html);
   const ofertas = [];
 
-  // Cada oferta aparece en un bloque con clase .p-2.border o similar — adaptar si cambia el HTML
-  $('div.col-10.py-1').each((_, el) => {
-    const titulo = $(el).find('a.font-weight-bold').text().trim();
-    const href = $(el).find('a.font-weight-bold').attr('href');
-    const empresa = $(el).find('span.d-none.d-sm-inline').first().text().trim();
-    const descripcion = $(el).find('p').text().trim();
+  $('.p-3.border.rounded.mb-3.bg-white').each((_, el) => {
+    const titulo = $(el).find('h3 a').text().trim();
+    const href = $(el).find('h3 a').attr('href') || '';
+    const empresa = $(el).find('a.text-primary').first().text().trim();
+    const descripcion = $(el).find('span.hidden-md-down').text().trim();
+    const meta = $(el).find('.col-12.col-lg-3').text().trim().replace(/\s+/g, ' ');
 
     if (!titulo || !href) return;
 
@@ -39,7 +40,7 @@ async function scrapearPagina(keywords) {
       titulo,
       empresa: empresa || 'Desconocida',
       url: href.startsWith('http') ? href : `${BASE_URL}${href}`,
-      descripcion,
+      descripcion: descripcion || meta,
       fuente: 'Tecnoempleo',
     });
   });
@@ -48,19 +49,19 @@ async function scrapearPagina(keywords) {
 }
 
 async function obtenerOfertas(keywords) {
-  const ofertas = [];
+  const todas = [];
 
-  // Busca por cada keyword principal con pausa entre peticiones
-  const kwPrincipales = keywords.slice(0, 3);
-  for (const kw of kwPrincipales) {
-    const resultado = await scrapearPagina([kw]);
-    ofertas.push(...resultado);
-    await sleep(1500);
+  for (const kw of keywords.slice(0, 3)) {
+    for (let p = 1; p <= PAGINAS; p++) {
+      const resultado = await scrapearPagina(kw, p);
+      todas.push(...resultado);
+      await sleep(1200);
+    }
   }
 
   // Deduplica por URL
   const mapa = new Map();
-  for (const o of ofertas) {
+  for (const o of todas) {
     if (!mapa.has(o.url)) mapa.set(o.url, o);
   }
 
