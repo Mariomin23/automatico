@@ -1,5 +1,6 @@
 let selectedDate = null;
 let runSource = null;
+const runData = {};
 
 // ── Init ──────────────────────────────────────────────────────────────────────
 
@@ -50,7 +51,7 @@ async function loadRuns() {
     try {
       const data = await api(`/api/runs/${date}`);
       const badge = document.getElementById(`badge-${date}`);
-      if (badge) badge.textContent = data.aptas;
+      if (badge) badge.textContent = data.total;
     } catch {}
   });
 
@@ -77,33 +78,35 @@ async function loadRun(date) {
   let data;
   try {
     data = await api(`/api/runs/${date}`);
+    runData[date] = data;
   } catch {
     main.innerHTML = '<div class="empty-state"><p>Error cargando datos</p></div>';
     return;
   }
 
-  const aptas = data.ofertas.filter((o) => o.apto).length;
+  // Añade campo experiencia y ordena
+  const ofertasOrdenadas = data.ofertas
+    .map((o) => ({ ...o, _exp: extraerExperiencia(o) }))
+    .sort((a, b) => a._exp - b._exp);
+
+  runData[date] = { ...data, ofertas: ofertasOrdenadas };
 
   main.innerHTML = `
     <div class="stats-bar">
       <div class="stat-card">
         <div class="stat-value">${data.total}</div>
-        <div class="stat-label">Evaluadas</div>
+        <div class="stat-label">Ofertas</div>
       </div>
       <div class="stat-card">
-        <div class="stat-value" style="color: var(--green)">${aptas}</div>
-        <div class="stat-label">Aptas ≥7</div>
-      </div>
-      <div class="stat-card">
-        <div class="stat-value">${data.total - aptas}</div>
-        <div class="stat-label">Descartadas</div>
+        <div class="stat-value">${data.fecha}</div>
+        <div class="stat-label">Fecha</div>
       </div>
     </div>
     <div class="jobs-grid" id="jobsGrid"></div>
   `;
 
   const grid = document.getElementById('jobsGrid');
-  data.ofertas.forEach((oferta, i) => {
+  ofertasOrdenadas.forEach((oferta, i) => {
     grid.appendChild(buildJobCard(oferta, date, i));
   });
 }
@@ -115,39 +118,30 @@ function buildJobCard(oferta, date, idx) {
   card.className = 'job-card';
   card.id = `card-${idx}`;
 
-  const scoreClass = oferta.puntuacion >= 7 ? 'green' : oferta.puntuacion >= 5 ? 'orange' : 'red';
-  const tags = (oferta.keywords_match || [])
-    .slice(0, 4)
-    .map((t) => `<span class="tag">${t}</span>`)
-    .join('');
-
-  const alertHtml = oferta.alerta
-    ? `<div class="alert-box">⚠️ ${oferta.alerta}</div>`
+  const desc = oferta.descripcion
+    ? `<p class="job-motivo">${escapeHtml(oferta.descripcion.slice(0, 300))}${oferta.descripcion.length > 300 ? '…' : ''}</p>`
     : '';
 
-  const cartaBtn = oferta.apto
-    ? `<button class="btn primary" onclick="toggleCarta('${date}','${oferta.slug}',${idx})">📄 Ver carta</button>`
-    : '';
+  const expLabel = expTexto(oferta._exp);
+  const expClass = oferta._exp === 0 ? 'exp-none' : oferta._exp <= 1 ? 'exp-low' : oferta._exp <= 3 ? 'exp-mid' : 'exp-high';
 
   card.innerHTML = `
     <div class="job-header" onclick="toggleCard(${idx})">
-      <div class="score-badge ${scoreClass}">${oferta.puntuacion}/10</div>
       <div class="job-info">
-        <div class="job-title">${oferta.titulo}</div>
-        <div class="job-company">${oferta.empresa}</div>
-        ${tags ? `<div class="job-tags">${tags}</div>` : ''}
+        <div class="job-title">${escapeHtml(oferta.titulo)}</div>
+        <div class="job-company">${escapeHtml(oferta.empresa)}</div>
       </div>
       <div class="job-meta">
+        <span class="exp-badge ${expClass}">${expLabel}</span>
         <span class="fuente-badge">${oferta.fuente || ''}</span>
         <span class="chevron">▶</span>
       </div>
     </div>
     <div class="job-body">
-      ${alertHtml}
-      <p class="job-motivo">${oferta.motivo}</p>
+      ${desc}
       <div class="job-actions">
         <a class="btn" href="${oferta.url}" target="_blank" rel="noopener">🔗 Ver oferta</a>
-        ${cartaBtn}
+        <button class="btn primary" id="btn-carta-${idx}" onclick="generarCarta(${idx}, '${date}')">✉️ Generar carta de presentación</button>
       </div>
       <div id="carta-${idx}"></div>
     </div>
@@ -161,22 +155,63 @@ function toggleCard(idx) {
   card.classList.toggle('open');
 }
 
-async function toggleCarta(date, slug, idx) {
-  const container = document.getElementById(`carta-${idx}`);
 
+async function generarCarta(idx, date) {
+  const card = document.getElementById(`card-${idx}`);
+  const container = document.getElementById(`carta-${idx}`);
+  const btn = document.getElementById(`btn-carta-${idx}`);
+
+  // Si ya hay carta visible, la oculta
   if (container.innerHTML) {
     container.innerHTML = '';
+    btn.textContent = '✉️ Generar carta de presentación';
+    btn.disabled = false;
     return;
   }
 
-  container.innerHTML = '<p class="carta-loading">Cargando carta...</p>';
+  btn.textContent = '⏳ Generando...';
+  btn.disabled = true;
+  container.innerHTML = '<p class="carta-loading">Ollama escribiendo la carta (~1 min)...</p>';
+
+  // Recoge datos de la oferta del estado guardado
+  const oferta = runData[date]?.ofertas[idx];
+  if (!oferta) {
+    container.innerHTML = '<p class="carta-loading">Error: oferta no encontrada</p>';
+    btn.textContent = '✉️ Generar carta de presentación';
+    btn.disabled = false;
+    return;
+  }
 
   try {
-    const data = await api(`/api/runs/${date}/carta/${slug}`);
-    container.innerHTML = `<div class="carta-box">${escapeHtml(data.carta)}</div>
-      <button class="btn" style="margin-top:8px" onclick="copyCarta(${idx})">📋 Copiar</button>`;
-  } catch {
-    container.innerHTML = '<p class="carta-loading">Carta no disponible</p>';
+    const res = await fetch('/api/carta/generar', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        titulo: oferta.titulo,
+        empresa: oferta.empresa,
+        descripcion: oferta.descripcion,
+        url: oferta.url,
+        date,
+        slug: oferta.slug,
+      }),
+    });
+
+    if (!res.ok) {
+      const err = await res.json();
+      throw new Error(err.error || `HTTP ${res.status}`);
+    }
+
+    const data = await res.json();
+    container.innerHTML = `
+      <div class="carta-box">${escapeHtml(data.carta)}</div>
+      <button class="btn" style="margin-top:8px" onclick="copyCarta(${idx})">📋 Copiar</button>
+    `;
+    btn.textContent = '✉️ Ocultar carta';
+    btn.disabled = false;
+  } catch (err) {
+    container.innerHTML = `<p class="carta-loading" style="color:var(--red)">Error: ${escapeHtml(err.message)}</p>`;
+    btn.textContent = '✉️ Generar carta de presentación';
+    btn.disabled = false;
   }
 }
 
@@ -243,6 +278,47 @@ function closeModal() {
     runSource.close();
     runSource = null;
   }
+}
+
+// ── Experiencia ───────────────────────────────────────────────────────────────
+
+function extraerExperiencia(oferta) {
+  const texto = `${oferta.titulo} ${oferta.descripcion || ''}`.toLowerCase();
+
+  // Sin experiencia explícita
+  if (/sin experiencia|no.*experiencia|sin exp\b|recién graduado|recien graduado|no experience|entry.?level/.test(texto)) return 0;
+
+  // Rango "X-Y años" — toma el mínimo
+  const rango = texto.match(/(\d+)\s*[-a]\s*(\d+)\s*a[ñn]/);
+  if (rango) return parseInt(rango[1], 10);
+
+  // "al menos X años", "mínimo X años", "X+ años"
+  const minimo = texto.match(/(?:al menos|m[íi]nimo|m[íi]n\.?|al menos|at least)\s*(\d+)\s*a[ñn]/);
+  if (minimo) return parseInt(minimo[1], 10);
+
+  // "X años de experiencia"
+  const exacto = texto.match(/(\d+)\s*a[ñn]o[s]?\s*(?:de\s*)?(?:experiencia|exp\b)/);
+  if (exacto) return parseInt(exacto[1], 10);
+
+  // Número de años suelto cerca de "experiencia"
+  const suelto = texto.match(/(\d+)\s*a[ñn]/);
+  if (suelto) return parseInt(suelto[1], 10);
+
+  // Keywords de nivel sin número
+  if (/\bjunior\b|\bjr\.?\b/.test(texto)) return 0;
+  if (/\bmid[\s-]?level\b|\bsemi[\s-]?senior\b/.test(texto)) return 2;
+  if (/\bsenior\b|\bsr\.?\b/.test(texto)) return 4;
+  if (/\blead\b|\bstaff\b|\bprincipal\b|\barchitect/.test(texto)) return 6;
+
+  // Sin pistas — va al final del grupo "sin datos"
+  return 99;
+}
+
+function expTexto(años) {
+  if (años === 0) return 'Sin exp.';
+  if (años === 99) return 'Sin datos';
+  if (años === 1) return '1 año';
+  return `${años} años`;
 }
 
 // ── Utils ─────────────────────────────────────────────────────────────────────

@@ -40,4 +40,4 @@ async function generarCartas(ofertasAptas) {
   return resultados;
 }
 
-module.exports = { generarCartas };
+module.exports = { generarCarta, generarCartas };

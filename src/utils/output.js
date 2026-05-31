@@ -19,55 +19,32 @@ function carpetaHoy() {
   return carpeta;
 }
 
-function generarResumen(ofertasPuntuadas) {
+function generarResumen(ofertas) {
   const carpeta = carpetaHoy();
   const hoy = new Date().toISOString().slice(0, 10);
 
-  let md = `# Resumen de ofertas — ${hoy}\n\n`;
-  md += `Total evaluadas: **${ofertasPuntuadas.length}**  \n`;
-  const aptas = ofertasPuntuadas.filter((o) => o.apto);
-  md += `Aptas (≥7): **${aptas.length}**\n\n---\n\n`;
+  let md = `# Resumen de ofertas — ${hoy}\n\nTotal: **${ofertas.length}**\n\n---\n\n`;
 
-  // Primero las aptas, luego el resto
-  const ordenadas = [...ofertasPuntuadas].sort((a, b) => b.puntuacion - a.puntuacion);
-
-  for (const oferta of ordenadas) {
-    const emoji = oferta.apto ? '✅' : '❌';
-    md += `## ${emoji} ${oferta.empresa} — ${oferta.titulo}\n\n`;
-    md += `**Puntuación:** ${oferta.puntuacion}/10  \n`;
+  for (const oferta of ofertas) {
+    md += `## ${oferta.empresa} — ${oferta.titulo}\n\n`;
     md += `**Fuente:** ${oferta.fuente}  \n`;
     md += `**URL:** ${oferta.url}  \n`;
-    if (oferta.keywords_match && oferta.keywords_match.length > 0) {
-      md += `**Match:** ${oferta.keywords_match.join(', ')}  \n`;
-    }
-    md += `**Motivo:** ${oferta.motivo}  \n`;
-    if (oferta.alerta) {
-      md += `**⚠️ Alerta:** ${oferta.alerta}  \n`;
-    }
-    if (oferta.apto) {
-      md += `**Carta:** [${slug(oferta.empresa)}_carta.md](./${slug(oferta.empresa)}_carta.md)  \n`;
-    }
+    if (oferta.descripcion) md += `**Descripción:** ${oferta.descripcion.slice(0, 200)}  \n`;
     md += '\n---\n\n';
   }
 
   const rutaResumen = path.join(carpeta, 'resumen.md');
   fs.writeFileSync(rutaResumen, md, 'utf-8');
 
-  // JSON estructurado para el dashboard web
   const json = {
     fecha: hoy,
-    total: ofertasPuntuadas.length,
-    aptas: aptas.length,
-    ofertas: ordenadas.map((o) => ({
+    total: ofertas.length,
+    ofertas: ofertas.map((o) => ({
       titulo: o.titulo,
       empresa: o.empresa,
       url: o.url,
       fuente: o.fuente,
-      puntuacion: o.puntuacion,
-      apto: o.apto,
-      motivo: o.motivo,
-      keywords_match: o.keywords_match || [],
-      alerta: o.alerta || null,
+      descripcion: o.descripcion || '',
       slug: slug(o.empresa),
     })),
   };
@@ -76,19 +53,4 @@ function generarResumen(ofertasPuntuadas) {
   return rutaResumen;
 }
 
-function guardarCartas(ofertasConCarta) {
-  const carpeta = carpetaHoy();
-  const rutas = [];
-
-  for (const oferta of ofertasConCarta) {
-    const nombre = `${slug(oferta.empresa)}_carta.md`;
-    const ruta = path.join(carpeta, nombre);
-    const contenido = `# Carta para ${oferta.empresa}\n\n_${oferta.titulo}_\n\n---\n\n${oferta.carta}\n`;
-    fs.writeFileSync(ruta, contenido, 'utf-8');
-    rutas.push(ruta);
-  }
-
-  return rutas;
-}
-
-module.exports = { generarResumen, guardarCartas };
+module.exports = { generarResumen };

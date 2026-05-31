@@ -50,6 +50,34 @@ app.get('/api/runs/:date/carta/:slug', (req, res) => {
   res.json({ carta });
 });
 
+// Genera carta de presentación bajo demanda con Ollama
+app.post('/api/carta/generar', async (req, res) => {
+  const { titulo, empresa, descripcion, url } = req.body;
+  if (!titulo || !empresa) return res.status(400).json({ error: 'Faltan datos de la oferta' });
+
+  const { generarCarta } = require('./ai/letterWriter');
+  const carta = await generarCarta({ titulo, empresa, descripcion: descripcion || '', url: url || '' });
+
+  if (!carta) return res.status(500).json({ error: 'Ollama no pudo generar la carta. ¿Está activo?' });
+
+  // Guarda la carta si tenemos la fecha del run
+  const { date, slug } = req.body;
+  if (date && slug) {
+    const fs = require('fs');
+    const path = require('path');
+    const carpeta = path.join(OUTPUT_DIR, date);
+    if (fs.existsSync(carpeta)) {
+      fs.writeFileSync(
+        path.join(carpeta, `${slug}_carta.md`),
+        `# Carta para ${empresa}\n\n_${titulo}_\n\n---\n\n${carta}\n`,
+        'utf-8'
+      );
+    }
+  }
+
+  res.json({ carta });
+});
+
 // Estado de Ollama
 app.get('/api/status', async (req, res) => {
   const axios = require('axios');
