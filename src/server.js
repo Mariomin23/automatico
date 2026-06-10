@@ -12,34 +12,56 @@ const OUTPUT_DIR = path.join(__dirname, '../output');
 app.use(express.static(path.join(__dirname, '../public')));
 app.use(express.json());
 
-// Lista de fechas con runs guardados
+// Solo acepta fechas YYYY-MM-DD y slugs alfanuméricos — evita rutas fuera de output/
+const FECHA_OK = (d) => /^\d{4}-\d{2}-\d{2}$/.test(d);
+const SLUG_OK = (s) => /^[\w-]+$/.test(s);
+
+// Lista de runs guardados con su total de ofertas: [{ date, total }]
 app.get('/api/runs', (req, res) => {
   if (!fs.existsSync(OUTPUT_DIR)) return res.json([]);
 
   const runs = fs.readdirSync(OUTPUT_DIR)
-    .filter((d) => /^\d{4}-\d{2}-\d{2}$/.test(d))
-    .filter((d) => fs.existsSync(path.join(OUTPUT_DIR, d, 'resumen.json')))
+    .filter(FECHA_OK)
     .sort()
-    .reverse();
+    .reverse()
+    .map((date) => {
+      try {
+        const data = JSON.parse(fs.readFileSync(path.join(OUTPUT_DIR, date, 'resumen.json'), 'utf-8'));
+        return { date, total: data.total };
+      } catch {
+        return null;
+      }
+    })
+    .filter(Boolean);
 
   res.json(runs);
 });
 
-// Datos de un run concreto
+// Datos de un run concreto + slugs que ya tienen carta guardada
 app.get('/api/runs/:date', (req, res) => {
-  const jsonPath = path.join(OUTPUT_DIR, req.params.date, 'resumen.json');
+  if (!FECHA_OK(req.params.date)) return res.status(400).json({ error: 'Fecha inválida' });
+
+  const carpeta = path.join(OUTPUT_DIR, req.params.date);
+  const jsonPath = path.join(carpeta, 'resumen.json');
   if (!fs.existsSync(jsonPath)) return res.status(404).json({ error: 'No encontrado' });
 
   try {
     const data = JSON.parse(fs.readFileSync(jsonPath, 'utf-8'));
-    res.json(data);
+    const cartas = fs.readdirSync(carpeta)
+      .filter((f) => f.endsWith('_carta.md'))
+      .map((f) => f.slice(0, -'_carta.md'.length));
+    res.json({ ...data, cartas });
   } catch {
     res.status(500).json({ error: 'Error leyendo datos' });
   }
 });
 
-// Carta de presentación de una empresa
+// Carta de presentación guardada de una oferta
 app.get('/api/runs/:date/carta/:slug', (req, res) => {
+  if (!FECHA_OK(req.params.date) || !SLUG_OK(req.params.slug)) {
+    return res.status(400).json({ error: 'Parámetros inválidos' });
+  }
+
   const cartaPath = path.join(OUTPUT_DIR, req.params.date, `${req.params.slug}_carta.md`);
   if (!fs.existsSync(cartaPath)) return res.status(404).json({ error: 'Carta no encontrada' });
 
@@ -96,7 +118,7 @@ app.post('/api/carta/generar', async (req, res) => {
         }
         if (json.done) {
           // Guarda la carta en disco
-          if (date && slug) {
+          if (date && slug && FECHA_OK(date) && SLUG_OK(slug)) {
             const carpeta = path.join(OUTPUT_DIR, date);
             if (fs.existsSync(carpeta)) {
               fs.writeFileSync(
@@ -125,7 +147,7 @@ app.post('/api/carta/generar', async (req, res) => {
 app.get('/api/status', async (req, res) => {
   const axios = require('axios');
   const ollamaUrl = process.env.OLLAMA_BASE_URL || 'http://localhost:11434';
-  const modelo = process.env.OLLAMA_MODEL || 'llama3.2';
+  const modelo = process.env.OLLAMA_MODEL || 'llama3';
   try {
     await axios.get(ollamaUrl, { timeout: 2000 });
     res.json({ ollama: true, modelo });

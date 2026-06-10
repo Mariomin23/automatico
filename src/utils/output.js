@@ -1,5 +1,6 @@
 const fs = require('fs');
 const path = require('path');
+const crypto = require('crypto');
 
 function slug(texto) {
   return texto
@@ -10,9 +11,19 @@ function slug(texto) {
     .replace(/^_+|_+$/g, '');
 }
 
+// Slug único por oferta: dos ofertas de la misma empresa no comparten carta
+function slugOferta(oferta) {
+  const hash = crypto.createHash('md5').update(oferta.url).digest('hex').slice(0, 6);
+  return `${slug(oferta.empresa)}_${hash}`;
+}
+
+// Fecha local YYYY-MM-DD (toISOString usaría UTC: de madrugada caería en el día anterior)
+function fechaHoy() {
+  return new Date().toLocaleDateString('sv-SE');
+}
+
 function carpetaHoy() {
-  const hoy = new Date().toISOString().slice(0, 10);
-  const carpeta = path.join(__dirname, '../../output', hoy);
+  const carpeta = path.join(__dirname, '../../output', fechaHoy());
   if (!fs.existsSync(carpeta)) {
     fs.mkdirSync(carpeta, { recursive: true });
   }
@@ -21,14 +32,16 @@ function carpetaHoy() {
 
 function generarResumen(ofertas) {
   const carpeta = carpetaHoy();
-  const hoy = new Date().toISOString().slice(0, 10);
+  const hoy = fechaHoy();
 
   let md = `# Resumen de ofertas — ${hoy}\n\nTotal: **${ofertas.length}**\n\n---\n\n`;
 
   for (const oferta of ofertas) {
-    md += `## ${oferta.empresa} — ${oferta.titulo}\n\n`;
+    md += `## ${oferta.nueva ? '🆕 ' : ''}${oferta.empresa} — ${oferta.titulo}\n\n`;
     md += `**Fuente:** ${oferta.fuente}  \n`;
     md += `**URL:** ${oferta.url}  \n`;
+    if (oferta.salario) md += `**Salario:** ${oferta.salario}  \n`;
+    if (oferta.modalidad) md += `**Modalidad:** ${oferta.modalidad}  \n`;
     if (oferta.descripcion) md += `**Descripción:** ${oferta.descripcion.slice(0, 200)}  \n`;
     md += '\n---\n\n';
   }
@@ -45,7 +58,10 @@ function generarResumen(ofertas) {
       url: o.url,
       fuente: o.fuente,
       descripcion: o.descripcion || '',
-      slug: slug(o.empresa),
+      slug: slugOferta(o),
+      nueva: !!o.nueva,
+      salario: o.salario || '',
+      modalidad: o.modalidad || '',
     })),
   };
   fs.writeFileSync(path.join(carpeta, 'resumen.json'), JSON.stringify(json, null, 2), 'utf-8');

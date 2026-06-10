@@ -1,4 +1,5 @@
 const tecnoempleo = require('./tecnoempleo');
+const infojobs = require('./infojobs');
 const googlejobs = require('./googlejobs');
 const { esNueva } = require('../utils/storage');
 const profile = require('../config/profile');
@@ -8,54 +9,56 @@ function log(msg) {
   console.log(`[${hora}] ${msg}`);
 }
 
-async function obtenerOfertasNuevas(vistas) {
+// Palabra completa: "java" no descarta "javascript"
+function tituloExcluido(titulo, excluir) {
+  return excluir.some((ex) => new RegExp(`\\b${ex}\\b`, 'i').test(titulo));
+}
+
+async function scrapearFuente(nombre, scraper, keywords) {
+  log(`Scraping ${nombre}...`);
+  try {
+    const ofertas = await scraper.obtenerOfertas(keywords);
+    log(`${nombre}: ${ofertas.length} ofertas encontradas`);
+    return ofertas;
+  } catch (err) {
+    console.error(`[Scraper] ${nombre} falló: ${err.message}`);
+    return [];
+  }
+}
+
+// Devuelve { ofertas, urlsEncontradas }:
+// - ofertas: las que van al resumen (nuevas primero, ya filtradas y con tope)
+// - urlsEncontradas: TODAS las scrapeadas, para marcarlas como vistas
+async function obtenerOfertas(vistas) {
   const keywords = profile.busqueda.keywords;
   const maxOfertas = parseInt(process.env.MAX_OFFERS_PER_RUN || '20', 10);
 
-  // Tecnoempleo
-  log('Scraping Tecnoempleo...');
-  let ofertasTecno = [];
-  try {
-    ofertasTecno = await tecnoempleo.obtenerOfertas(keywords);
-    const nuevasTecno = ofertasTecno.filter((o) => esNueva(o.url, vistas));
-    log(`Tecnoempleo: ${ofertasTecno.length} ofertas encontradas, ${nuevasTecno.length} nuevas`);
-    ofertasTecno = nuevasTecno;
-  } catch (err) {
-    console.error(`[Scraper] Tecnoempleo falló: ${err.message}`);
-  }
-
-  // Google Jobs
-  log('Scraping Google Jobs...');
-  let ofertasGoogle = [];
-  try {
-    ofertasGoogle = await googlejobs.obtenerOfertas(keywords);
-    const nuevasGoogle = ofertasGoogle.filter((o) => esNueva(o.url, vistas));
-    log(`Google Jobs: ${ofertasGoogle.length} ofertas encontradas, ${nuevasGoogle.length} nuevas`);
-    ofertasGoogle = nuevasGoogle;
-  } catch (err) {
-    console.error(`[Scraper] Google Jobs falló: ${err.message}`);
-  }
+  const ofertasTecno = await scrapearFuente('Tecnoempleo', tecnoempleo, keywords);
+  const ofertasInfo = await scrapearFuente('InfoJobs', infojobs, keywords);
+  const ofertasGoogle = await scrapearFuente('Google Jobs', googlejobs, keywords);
 
   // Combina y deduplica por URL
-  const todas = [...ofertasTecno, ...ofertasGoogle];
   const mapa = new Map();
-  for (const o of todas) {
+  for (const o of [...ofertasTecno, ...ofertasInfo, ...ofertasGoogle]) {
     if (!mapa.has(o.url)) mapa.set(o.url, o);
   }
 
   // Filtra por palabras excluidas en título
   const excluir = profile.busqueda.excluir || [];
-  const filtradas = Array.from(mapa.values()).filter((o) => {
-    const titulo = o.titulo.toLowerCase();
-    return !excluir.some((ex) => titulo.includes(ex.toLowerCase()));
-  });
+  const filtradas = Array.from(mapa.values()).filter((o) => !tituloExcluido(o.titulo, excluir));
 
   const descartadas = mapa.size - filtradas.length;
   if (descartadas > 0) log(`Filtradas por excluir (${excluir.join(', ')}): ${descartadas} ofertas`);
 
-  const resultado = filtradas.slice(0, maxOfertas);
-  log(`Total ofertas nuevas: ${resultado.length}`);
-  return resultado;
+  // Marca las nuevas y las pone primero: el tope nunca deja fuera una nueva
+  const conNueva = filtradas.map((o) => ({ ...o, nueva: esNueva(o.url, vistas) }));
+  conNueva.sort((a, b) => (b.nueva ? 1 : 0) - (a.nueva ? 1 : 0));
+
+  const ofertas = conNueva.slice(0, maxOfertas);
+  const nuevas = ofertas.filter((o) => o.nueva).length;
+  log(`Total: ${ofertas.length} ofertas (${nuevas} nuevas)`);
+
+  return { ofertas, urlsEncontradas: Array.from(mapa.keys()) };
 }
 
-module.exports = { obtenerOfertasNuevas };
+module.exports = { obtenerOfertas };

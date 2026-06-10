@@ -13,8 +13,8 @@ Nivel técnico actual: sé lo que hago en JavaScript/Node/React pero soy junior.
 Una herramienta con dos modos de uso:
 
 ### `npm start` — scraping CLI
-1. Scraping de ofertas en Tecnoempleo (portal público, sin login)
-2. Filtro de ofertas ya vistas (`data/seen_jobs.json`)
+1. Scraping de ofertas en Tecnoempleo e InfoJobs (portales públicos, sin login)
+2. Marca de ofertas nuevas con `data/seen_jobs.json` — el resumen incluye todas las encontradas, con campo `nueva` y las nuevas primero (el tope `MAX_OFFERS_PER_RUN` nunca deja fuera una nueva)
 3. Output diario en Markdown + JSON: resumen de ofertas
 4. Envío del resumen por email (opcional, con nodemailer)
 
@@ -23,8 +23,8 @@ Una herramienta con dos modos de uso:
 ### `npm run serve` — dashboard web
 1. Servidor Express en `http://localhost:3000`
 2. Historial de runs por fecha en sidebar
-3. Ofertas ordenadas por experiencia requerida (sin exp → junior → mid → senior)
-4. Botón **"Generar carta de presentación"** por oferta — llama a Ollama solo cuando se pulsa
+3. Ofertas con nuevas primero y, dentro de cada grupo, ordenadas por experiencia requerida (sin exp → junior → mid → senior)
+4. Botón **"Generar carta de presentación"** por oferta — si ya hay carta guardada en disco la muestra al instante ("Ver carta guardada" + "Regenerar"); solo llama a Ollama si no existe o se regenera
 5. Botón **"Nueva búsqueda"** con logs en tiempo real (SSE)
 
 ---
@@ -82,6 +82,7 @@ job-hunter-ai/
 ├── src/
 │   ├── scraper/
 │   │   ├── tecnoempleo.js      ← axios + cheerio, selectores actualizados, 2 páginas por keyword
+│   │   ├── infojobs.js         ← axios, parsea el JSON embebido __INITIAL_PROPS__ (la página es React)
 │   │   ├── googlejobs.js       ← deshabilitado por defecto (necesita playwright install)
 │   │   └── index.js
 │   ├── ai/
@@ -162,10 +163,22 @@ const texto = response.data.response;
 - 1200ms de pausa entre peticiones
 - Deduplica por URL antes de devolver resultados
 
+### Scraping — InfoJobs
+- Las ofertas NO están en el HTML: la página es React y van embebidas en `window.__INITIAL_PROPS__ = JSON.parse("...")`. Se extrae ese JSON con doble `JSON.parse` (primero des-escapa el string JS).
+- URL de búsqueda: `https://www.infojobs.net/jobsearch/search-results/list.xhtml?keyword={kw}&cityId=28079&page={n}&sortBy=RELEVANCE`
+- `props.offers` trae ~22 ofertas/página con `title`, `companyName`, `description` completa, `link`, `salary`, `teleworking`, `city`
+- Filtro: solo ofertas de Madrid o 100% en remoto (InfoJobs cuela otras ciudades)
+- Campos extra que aporta: `salario` (formateado, ej. `22.000–25.000 €/año`) y `modalidad` (Híbrido / Presencial / remoto)
+- 3 keywords × 2 páginas, 1200ms de pausa, deduplica por URL
+
+### Filtro de excluidas
+- Por palabra completa (`\b{palabra}\b`, case-insensitive): "java" NO descarta "javascript"
+
 ### Storage
 - `data/seen_jobs.json` guarda un array de URLs ya procesadas
 - Si el archivo no existe, créalo vacío: `[]`
 - Actualiza el archivo al final de cada ejecución, no durante
+- Se marcan como vistas TODAS las URLs encontradas en el run, también las que no entraron en el resumen por el tope
 
 ### Output (sin puntuación)
 - Carpeta `/output/YYYY-MM-DD/` con la fecha de hoy
@@ -182,25 +195,34 @@ const texto = response.data.response;
       "url": "...",
       "fuente": "Tecnoempleo",
       "descripcion": "...",
-      "slug": "empresa_slug"
+      "slug": "empresa_slug_a1b2c3",
+      "nueva": true,
+      "salario": "22.000–25.000 €/año",
+      "modalidad": "Híbrido"
     }
   ]
 }
 ```
-- Cartas: `{empresa_slug}_carta.md` — generadas bajo demanda desde el dashboard
+- `slug` = empresa + hash corto de la URL (md5, 6 chars): dos ofertas de la misma empresa no colisionan
+- `nueva` = la URL no estaba en `seen_jobs.json` al hacer el run
+- `salario`/`modalidad` = solo InfoJobs los aporta; vacíos en otras fuentes
+- La fecha de la carpeta es LOCAL (no `toISOString`, que en madrugada caería en el día anterior por UTC)
+- Cartas: `{slug}_carta.md` — generadas bajo demanda desde el dashboard y reutilizadas en visitas posteriores
 
 ### Dashboard (server.js + public/)
 - Express sirve `public/` como estático
 - API endpoints:
-  - `GET /api/runs` — lista fechas con runs
-  - `GET /api/runs/:date` — datos del run (resumen.json)
+  - `GET /api/runs` — lista de runs con total: `[{ "date": "2026-06-11", "total": 20 }]`
+  - `GET /api/runs/:date` — datos del run (resumen.json) + `cartas: [slugs con carta guardada]`
   - `GET /api/runs/:date/carta/:slug` — carta guardada
-  - `POST /api/carta/generar` — genera carta con Ollama bajo demanda
+  - `POST /api/carta/generar` — genera carta con Ollama bajo demanda (SSE) y la guarda en disco
   - `GET /api/run/start` — SSE: lanza `npm start` y streama logs
   - `GET /api/status` — estado de Ollama
+- `:date` y `:slug` se validan con regex estricta (no rutas fuera de `output/`)
 - Frontend: vanilla JS, sin framework, sin build step (`public/app.js`)
-- Las ofertas se ordenan por experiencia requerida extraída con regex del título+descripción
-- Badges de experiencia: Sin exp. (verde) · 1 año (azul) · 2-3 años (amarillo) · 4+ años (rojo)
+- Orden: nuevas primero; dentro de cada grupo, por experiencia requerida extraída con regex del título+descripción
+- Badges: 🆕 Nueva (verde) · salario · modalidad · experiencia: Sin exp. (verde) · 1 año (azul) · 2-3 años (amarillo) · 4+ años (rojo)
+- Si una oferta ya tiene carta guardada, el botón dice "Ver carta guardada" y la carga del disco sin llamar a Ollama; "Regenerar" fuerza una nueva
 
 ### Código
 - CommonJS (`require`, `module.exports`) — no ESModules
@@ -280,16 +302,18 @@ Ollama solo se necesita para generar cartas desde el dashboard. `npm start` (scr
 ### `npm start`
 ```
 [07:00] Iniciando job-hunter-ai...
-[07:00] Cargando ofertas ya vistas: 34 registros
+[07:00] Cargando ofertas ya vistas: 83 registros
 [07:00] Scraping Tecnoempleo...
-[07:01] Tecnoempleo: 157 ofertas encontradas, 12 nuevas
+[07:01] Tecnoempleo: 29 ofertas encontradas
+[07:01] Scraping InfoJobs...
+[07:01] InfoJobs: 57 ofertas encontradas
 [07:01] Scraping Google Jobs...
-[GoogleJobs] Browsers no instalados. Ejecuta: npx playwright install chromium
-[07:01] Google Jobs: 0 ofertas encontradas, 0 nuevas
-[07:01] Total ofertas nuevas: 12
-[07:01] Resumen guardado en: output/2026-05-31/resumen.md
-[07:01] seen_jobs.json actualizado: 46 registros
-[07:01] ✅ Completado. 12 ofertas guardadas.
+[07:01] Google Jobs: 0 ofertas encontradas
+[07:01] Filtradas por excluir (java, php, senior, lead): 24 ofertas
+[07:01] Total: 20 ofertas (12 nuevas)
+[07:01] Resumen guardado en: output/2026-06-11/resumen.md
+[07:01] seen_jobs.json actualizado: 156 registros
+[07:01] ✅ Completado. 20 ofertas guardadas.
 ```
 
 ### `npm run serve`

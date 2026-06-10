@@ -1,7 +1,7 @@
 require('dotenv').config();
 
 const { cargarVistas, guardarVistas } = require('./utils/storage');
-const { obtenerOfertasNuevas } = require('./scraper/index');
+const { obtenerOfertas } = require('./scraper/index');
 const { generarResumen } = require('./utils/output');
 const { enviarResumen } = require('./utils/mailer');
 
@@ -16,24 +16,24 @@ async function main() {
   const vistas = cargarVistas();
   log(`Cargando ofertas ya vistas: ${vistas.length} registros`);
 
-  const ofertasNuevas = await obtenerOfertasNuevas(vistas);
+  const { ofertas, urlsEncontradas } = await obtenerOfertas(vistas);
 
-  if (ofertasNuevas.length === 0) {
-    log('No hay ofertas nuevas hoy. Fin.');
+  if (ofertas.length === 0) {
+    log('El scraping no devolvió ofertas. No se genera resumen.');
     return;
   }
 
-  const rutaResumen = generarResumen(ofertasNuevas);
+  const rutaResumen = generarResumen(ofertas);
   log(`Resumen guardado en: ${rutaResumen}`);
 
   await enviarResumen(rutaResumen);
 
-  const urlsNuevas = ofertasNuevas.map((o) => o.url);
-  const vistasActualizadas = [...new Set([...vistas, ...urlsNuevas])];
+  // Marca como vistas todas las encontradas, también las que no entraron en el resumen
+  const vistasActualizadas = [...new Set([...vistas, ...urlsEncontradas])];
   guardarVistas(vistasActualizadas);
   log(`seen_jobs.json actualizado: ${vistasActualizadas.length} registros`);
 
-  log(`✅ Completado. ${ofertasNuevas.length} ofertas guardadas.`);
+  log(`✅ Completado. ${ofertas.length} ofertas guardadas.`);
 }
 
 main().catch((err) => {

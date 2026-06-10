@@ -31,7 +31,7 @@ async function checkStatus() {
 // ── Historial de runs ─────────────────────────────────────────────────────────
 
 async function loadRuns() {
-  const runs = await api('/api/runs');
+  const runs = await api('/api/runs'); // [{ date, total }]
   const list = document.getElementById('dateList');
 
   if (!runs.length) {
@@ -39,24 +39,15 @@ async function loadRuns() {
     return;
   }
 
-  list.innerHTML = runs.map((date) => `
+  list.innerHTML = runs.map(({ date, total }) => `
     <div class="date-item" id="date-${date}" onclick="selectDate('${date}')">
       <span>${formatDate(date)}</span>
-      <span class="date-badge" id="badge-${date}">—</span>
+      <span class="date-badge">${total}</span>
     </div>
   `).join('');
 
-  // Carga badges de conteo en paralelo
-  runs.forEach(async (date) => {
-    try {
-      const data = await api(`/api/runs/${date}`);
-      const badge = document.getElementById(`badge-${date}`);
-      if (badge) badge.textContent = data.total;
-    } catch {}
-  });
-
   // Selecciona el más reciente por defecto
-  selectDate(runs[0]);
+  selectDate(runs[0].date);
 }
 
 async function selectDate(date) {
@@ -84,18 +75,24 @@ async function loadRun(date) {
     return;
   }
 
-  // Añade campo experiencia y ordena
+  // Nuevas primero; dentro de cada grupo, por experiencia requerida
   const ofertasOrdenadas = data.ofertas
     .map((o) => ({ ...o, _exp: extraerExperiencia(o) }))
-    .sort((a, b) => a._exp - b._exp);
+    .sort((a, b) => (b.nueva ? 1 : 0) - (a.nueva ? 1 : 0) || a._exp - b._exp);
 
-  runData[date] = { ...data, ofertas: ofertasOrdenadas };
+  runData[date] = { ...data, ofertas: ofertasOrdenadas, cartas: data.cartas || [] };
+
+  const numNuevas = ofertasOrdenadas.filter((o) => o.nueva).length;
 
   main.innerHTML = `
     <div class="stats-bar">
       <div class="stat-card">
         <div class="stat-value">${data.total}</div>
         <div class="stat-label">Ofertas</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-value">${numNuevas}</div>
+        <div class="stat-label">Nuevas</div>
       </div>
       <div class="stat-card">
         <div class="stat-value">${data.fecha}</div>
@@ -125,6 +122,13 @@ function buildJobCard(oferta, date, idx) {
   const expLabel = expTexto(oferta._exp);
   const expClass = oferta._exp === 0 ? 'exp-none' : oferta._exp <= 1 ? 'exp-low' : oferta._exp <= 3 ? 'exp-mid' : 'exp-high';
 
+  const nuevaBadge = oferta.nueva ? '<span class="nueva-badge">🆕 Nueva</span>' : '';
+  const salarioBadge = oferta.salario ? `<span class="salario-badge">💶 ${escapeHtml(oferta.salario)}</span>` : '';
+  const modalidadBadge = oferta.modalidad ? `<span class="modalidad-badge">${escapeHtml(oferta.modalidad)}</span>` : '';
+
+  const tieneCarta = (runData[date]?.cartas || []).includes(oferta.slug);
+  const labelCarta = tieneCarta ? '📄 Ver carta guardada' : '✉️ Generar carta de presentación';
+
   card.innerHTML = `
     <div class="job-header" onclick="toggleCard(${idx})">
       <div class="job-info">
@@ -132,6 +136,9 @@ function buildJobCard(oferta, date, idx) {
         <div class="job-company">${escapeHtml(oferta.empresa)}</div>
       </div>
       <div class="job-meta">
+        ${nuevaBadge}
+        ${salarioBadge}
+        ${modalidadBadge}
         <span class="exp-badge ${expClass}">${expLabel}</span>
         <span class="fuente-badge">${oferta.fuente || ''}</span>
         <span class="chevron">▶</span>
@@ -140,8 +147,8 @@ function buildJobCard(oferta, date, idx) {
     <div class="job-body">
       ${desc}
       <div class="job-actions">
-        <a class="btn" href="${oferta.url}" target="_blank" rel="noopener">🔗 Ver oferta</a>
-        <button class="btn primary" id="btn-carta-${idx}" onclick="generarCarta(${idx}, '${date}')">✉️ Generar carta de presentación</button>
+        <a class="btn" href="${escapeHtml(oferta.url)}" target="_blank" rel="noopener">🔗 Ver oferta</a>
+        <button class="btn primary" id="btn-carta-${idx}" onclick="generarCarta(${idx}, '${date}')">${labelCarta}</button>
       </div>
       <div id="carta-${idx}"></div>
     </div>
@@ -156,31 +163,57 @@ function toggleCard(idx) {
 }
 
 
-async function generarCarta(idx, date) {
-  const card = document.getElementById(`card-${idx}`);
+function labelBotonCarta(date, slug) {
+  const tieneCarta = (runData[date]?.cartas || []).includes(slug);
+  return tieneCarta ? '📄 Ver carta guardada' : '✉️ Generar carta de presentación';
+}
+
+function accionesCarta(idx, date, nombreFichero) {
+  return `
+    <div style="display:flex;gap:8px;margin-top:8px">
+      <button class="btn" onclick="copyCarta(${idx})">📋 Copiar</button>
+      <button class="btn" onclick="descargarCarta(${idx}, '${nombreFichero}')">⬇️ Descargar .txt</button>
+      <button class="btn" onclick="generarCarta(${idx}, '${date}', true)">🔄 Regenerar</button>
+    </div>
+  `;
+}
+
+async function generarCarta(idx, date, regenerar = false) {
   const container = document.getElementById(`carta-${idx}`);
   const btn = document.getElementById(`btn-carta-${idx}`);
-
-  // Si ya hay carta visible, la oculta
-  if (container.innerHTML) {
-    container.innerHTML = '';
-    btn.textContent = '✉️ Generar carta de presentación';
-    btn.disabled = false;
-    return;
-  }
-
-  btn.textContent = '⏳ Generando...';
-  btn.disabled = true;
 
   const oferta = runData[date]?.ofertas[idx];
   if (!oferta) {
     container.innerHTML = '<p class="carta-loading">Error: oferta no encontrada</p>';
-    btn.textContent = '✉️ Generar carta de presentación';
+    return;
+  }
+
+  // Si ya hay carta visible y no es regeneración, la oculta
+  if (container.innerHTML && !regenerar) {
+    container.innerHTML = '';
+    btn.textContent = labelBotonCarta(date, oferta.slug);
     btn.disabled = false;
     return;
   }
 
   const nombreFichero = `carta_${oferta.slug}.txt`;
+
+  // Carta guardada en disco: se muestra al instante, sin llamar a Ollama
+  if (!regenerar && (runData[date].cartas || []).includes(oferta.slug)) {
+    try {
+      const data = await api(`/api/runs/${date}/carta/${oferta.slug}`);
+      container.innerHTML = `<div class="carta-box" id="carta-text-${idx}"></div>` + accionesCarta(idx, date, nombreFichero);
+      document.getElementById(`carta-text-${idx}`).textContent = data.carta;
+      btn.textContent = '✉️ Ocultar carta';
+      return;
+    } catch {
+      // Si falla la lectura, cae al flujo de generación
+    }
+  }
+
+  btn.textContent = '⏳ Generando...';
+  btn.disabled = true;
+
   const controller = new AbortController();
 
   container.innerHTML = `
@@ -235,14 +268,11 @@ async function generarCarta(idx, date) {
         }
 
         if (msg.done) {
-          // Reemplaza botón Detener por Copiar + Descargar
+          // Reemplaza botón Detener por Copiar + Descargar + Regenerar
           document.getElementById(`btn-detener-${idx}`)?.parentElement.remove();
-          container.insertAdjacentHTML('beforeend', `
-            <div style="display:flex;gap:8px;margin-top:8px">
-              <button class="btn" onclick="copyCarta(${idx})">📋 Copiar</button>
-              <button class="btn" onclick="descargarCarta(${idx}, '${nombreFichero}')">⬇️ Descargar .txt</button>
-            </div>
-          `);
+          container.insertAdjacentHTML('beforeend', accionesCarta(idx, date, nombreFichero));
+          // La carta queda guardada en disco — el botón pasa a "Ver carta"
+          if (!runData[date].cartas.includes(oferta.slug)) runData[date].cartas.push(oferta.slug);
           btn.textContent = '✉️ Ocultar carta';
           btn.disabled = false;
         }
@@ -264,7 +294,7 @@ async function generarCarta(idx, date) {
     } else {
       container.innerHTML = `<p class="carta-loading" style="color:var(--red)">Error: ${escapeHtml(err.message)}</p>`;
     }
-    btn.textContent = '✉️ Generar carta de presentación';
+    btn.textContent = labelBotonCarta(date, oferta.slug);
     btn.disabled = false;
   }
 }
@@ -407,10 +437,12 @@ function formatDate(dateStr) {
 }
 
 function escapeHtml(str) {
-  return str
+  return String(str)
     .replace(/&/g, '&amp;')
     .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;');
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
 }
 
 // ── Arranca ───────────────────────────────────────────────────────────────────
