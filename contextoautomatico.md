@@ -47,7 +47,7 @@ Una herramienta con dos modos de uso:
   busqueda: {
     modalidad: ["presencial", "hibrido", "remoto"],
     ciudad: "Madrid",
-    keywords: ["fullstack", "node", "react", "angular", "javascript", "junior"],
+    keywords: ["javascript junior", "react junior", "node junior", "angular junior", "fullstack junior"],
     excluir: ["java", "php", "senior", "lead"]
   }
 }
@@ -58,7 +58,7 @@ Una herramienta con dos modos de uso:
 ## Stack del proyecto
 
 - **Runtime:** Node.js 18+
-- **Scraping:** axios + cheerio (páginas estáticas)
+- **Scraping:** axios + cheerio (Tecnoempleo, HTML estático) y axios + JSON embebido (InfoJobs, página React)
 - **IA:** Ollama corriendo en local — modelo `llama3` (el disponible; configurable via `OLLAMA_MODEL`)
 - **Cliente HTTP para Ollama:** axios
 - **Servidor web:** Express (solo para el dashboard, no para el scraping CLI)
@@ -107,7 +107,9 @@ job-hunter-ai/
 │   └── YYYY-MM-DD/
 │       ├── resumen.md
 │       ├── resumen.json        ← datos estructurados para el dashboard
-│       └── {empresa_slug}_carta.md   ← generadas bajo demanda
+│       └── {slug}_carta.md     ← generadas bajo demanda (slug = empresa + hash de URL)
+├── docs/
+│   └── superpowers/specs/      ← documentos de diseño de cada cambio grande
 ├── .env
 ├── .env.example
 ├── .gitignore
@@ -142,7 +144,7 @@ npm run serve:dev  # dashboard con nodemon
 - SIEMPRE envuelve las llamadas en try/catch
 - Si Ollama devuelve JSON, usa JSON.parse dentro de try/catch con fallback regex
 - No hagas más de 1 llamada por segundo (sleep 1100ms entre llamadas en bucles)
-- Usa `stream: false` en todas las llamadas
+- Usa `stream: false` en scripts y bucles; excepción: `POST /api/carta/generar` del dashboard usa `stream: true` para reenviar tokens por SSE en tiempo real
 
 ```javascript
 const response = await axios.post(`${process.env.OLLAMA_BASE_URL || 'http://localhost:11434'}/api/generate`, {
@@ -320,7 +322,7 @@ Ollama solo se necesita para generar cartas desde el dashboard. `npm start` (scr
 ```
 Dashboard en http://localhost:3000
 ```
-Abre el navegador en esa URL. El dashboard carga las ofertas del run más reciente, ordenadas por experiencia.
+Abre el navegador en esa URL. El dashboard carga las ofertas del run más reciente: nuevas primero y, dentro de cada grupo, ordenadas por experiencia.
 
 ---
 
@@ -334,3 +336,25 @@ Abre el navegador en esa URL. El dashboard carga las ofertas del run más recien
 - No uses la Anthropic API ni ninguna API de pago
 - No añadas puntuación automática al flujo de `npm start` — consume demasiados recursos
 - No rompas el flujo de scraping si Google Jobs falla — devuelve array vacío y continúa
+
+---
+
+## Historial de cambios
+
+### 2026-06-11 — commit `4dcf4bd` (revisión "va fatal")
+
+Diseño completo en `docs/superpowers/specs/2026-06-11-dashboard-scraper-mejoras-design.md`. Qué se arregló y por qué:
+
+1. **Filtro `excluir` por palabra completa.** Antes usaba `titulo.includes('java')`, y "java" está dentro de "javascript" → se descartaban las ofertas de JavaScript, las más relevantes para mi perfil. Ahora usa regex con límites de palabra (`\bjava\b`), que no coincide dentro de otra palabra.
+
+2. **Scraper de InfoJobs nuevo (`src/scraper/infojobs.js`).** Había un intento con selectores CSS que solo capturaba 5 de ~22 ofertas: InfoJobs es una app React y las ofertas no están en el HTML, viajan dentro de `window.__INITIAL_PROPS__` como JSON escapado. El scraper extrae ese JSON (doble `JSON.parse`) y consigue las 22 por página con descripción completa, salario y modalidad. Filtra a Madrid o 100% remoto. `googlejobs.js` se restauró a su versión original (deshabilitado sin Playwright).
+
+3. **Filtro de "ya vistas" restaurado sin vaciar el dashboard.** El filtro estricto original tenía un problema: tras varios runs todo estaba "visto" → no se generaba resumen → dashboard vacío (por eso se había quitado el filtro, lo que causaba que cada run repitiera todo). Solución intermedia: el resumen incluye TODAS las ofertas encontradas con campo `nueva: true/false`; las nuevas van primero antes del tope, y `seen_jobs.json` registra todas las URLs encontradas.
+
+4. **Cartas persistentes en el dashboard.** El servidor ya guardaba cada carta en disco y tenía endpoint para leerla, pero el frontend nunca lo usaba: cada clic regeneraba la carta con Ollama (minutos de espera). Ahora `GET /api/runs/:date` devuelve qué slugs tienen carta; el botón pasa a "Ver carta guardada" y la carga al instante; "Regenerar" fuerza una nueva.
+
+5. **Slug único por oferta.** Antes slug = solo empresa: dos ofertas de la misma empresa compartían fichero de carta y se sobrescribían. Ahora slug = `empresa + hash md5 corto de la URL` (6 chars).
+
+6. **Bug de fecha por UTC.** `toISOString()` devuelve fecha UTC: un run a la 01:42 hora de Madrid (verano = UTC+2) escribía en la carpeta del día ANTERIOR. Ahora la fecha de carpeta es local (`toLocaleDateString('sv-SE')`, que da formato YYYY-MM-DD).
+
+7. **Menores.** `GET /api/runs` devuelve `[{date, total}]` para que el sidebar no haga una petición por fecha (antes N+1); default de modelo unificado a `llama3` en `/api/status`; validación estricta de `:date` y `:slug` en rutas (evita leer/escribir fuera de `output/`); `escapeHtml` escapa también comillas; badges nuevos en tarjeta: 🆕 Nueva, salario y modalidad.
