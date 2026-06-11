@@ -1,4 +1,6 @@
 const axios = require('axios');
+const infojobsApi = require('./infojobsApi');
+const profile = require('../config/profile');
 
 const BASE_URL = 'https://www.infojobs.net';
 const HEADERS = {
@@ -81,6 +83,15 @@ async function scrapearPagina(keyword, pagina) {
 }
 
 async function obtenerOfertas(keywords = []) {
+  // Vía preferida: API REST oficial (Basic auth con clientId/secret).
+  // Estable y sin riesgo de bloqueo. Solo si hay credenciales configuradas.
+  if (infojobsApi.hayCredenciales()) {
+    const ofertas = await infojobsApi.obtenerOfertas(keywords, profile.busqueda.ciudad);
+    if (ofertas.length) return ofertas;
+    console.error('[InfoJobs] API sin resultados; pruebo scraping HTML');
+  }
+
+  // Fallback: scraping HTML anónimo (sin credenciales o si la API no devolvió nada).
   const todas = [];
 
   for (const kw of keywords.slice(0, 3)) {

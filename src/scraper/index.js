@@ -1,6 +1,5 @@
 const tecnoempleo = require('./tecnoempleo');
 const infojobs = require('./infojobs');
-const googlejobs = require('./googlejobs');
 const { esNueva } = require('../utils/storage');
 const profile = require('../config/profile');
 
@@ -35,11 +34,10 @@ async function obtenerOfertas(vistas) {
 
   const ofertasTecno = await scrapearFuente('Tecnoempleo', tecnoempleo, keywords);
   const ofertasInfo = await scrapearFuente('InfoJobs', infojobs, keywords);
-  const ofertasGoogle = await scrapearFuente('Google Jobs', googlejobs, keywords);
 
   // Combina y deduplica por URL
   const mapa = new Map();
-  for (const o of [...ofertasTecno, ...ofertasInfo, ...ofertasGoogle]) {
+  for (const o of [...ofertasTecno, ...ofertasInfo]) {
     if (!mapa.has(o.url)) mapa.set(o.url, o);
   }
 
