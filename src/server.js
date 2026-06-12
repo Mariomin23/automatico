@@ -91,8 +91,17 @@ app.get('/api/runs/:date/carta/:slug', async (req, res) => {
   res.json({ carta });
 });
 
+// En Vercel no hay Ollama; sin GROQ_API_KEY las cartas solo funcionan en local
+function cartasDisponibles() {
+  return !(process.env.VERCEL && !process.env.GROQ_API_KEY);
+}
+
 // Genera carta con streaming SSE — el cliente ve tokens en tiempo real
 app.post('/api/carta/generar', requiereAdmin, async (req, res) => {
+  if (!cartasDisponibles()) {
+    return res.status(503).json({ error: 'Esta función solo está disponible en entorno local' });
+  }
+
   const { titulo, empresa, descripcion, url, date, slug } = req.body;
   if (!titulo || !empresa) return res.status(400).json({ error: 'Faltan datos de la oferta' });
 
@@ -170,9 +179,12 @@ app.post('/api/estados/:slug', requiereAdmin, async (req, res) => {
 
 // Estado del LLM (Ollama en local, Groq en producción)
 app.get('/api/status', async (req, res) => {
+  if (!cartasDisponibles()) {
+    return res.json({ ollama: false, proveedor: 'ninguno', modelo: '', cartas: false });
+  }
   const { ok, proveedor, modelo } = await llm.estado();
   // "ollama" se mantiene por compatibilidad con el frontend: significa "LLM disponible"
-  res.json({ ollama: ok, proveedor, modelo });
+  res.json({ ollama: ok, proveedor, modelo, cartas: true });
 });
 
 // Lanza una nueva búsqueda con SSE para logs en tiempo real

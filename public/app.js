@@ -2,6 +2,9 @@ let selectedDate = null;
 let runSource = null;
 const runData = {};
 
+// En producción no hay LLM: generar cartas solo funciona en local
+let cartasDisponibles = true;
+
 // CRM: estados por slug ({ slug: 'aplicado' | 'descartado' }); 'pendiente' = sin entrada
 let estados = {};
 
@@ -58,8 +61,14 @@ async function asegurarAdmin() {
 async function checkStatus() {
   try {
     const data = await api('/api/status');
+    cartasDisponibles = data.cartas !== false;
     const dot = document.getElementById('statusDot');
     const label = document.getElementById('statusLabel');
+    if (!cartasDisponibles) {
+      dot.className = 'status-dot offline';
+      label.textContent = 'Cartas: solo en entorno local';
+      return;
+    }
     const nombre = data.proveedor === 'groq' ? 'Groq' : 'Ollama';
     if (data.ollama) {
       dot.className = 'status-dot online';
@@ -386,6 +395,13 @@ async function abrirCarta(idx, date, regenerar = false) {
     } catch {
       // Si falla la lectura, cae al flujo de generación
     }
+  }
+
+  // En producción no hay LLM: la generación queda deshabilitada
+  if (!cartasDisponibles) {
+    msgEl.textContent = '⚠️ Esta función solo está disponible en entorno local.';
+    footer.innerHTML = '';
+    return;
   }
 
   // Generar cuesta recursos: requiere token de administración en producción
