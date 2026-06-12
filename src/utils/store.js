@@ -45,6 +45,12 @@ async function fsListar(prefijo) {
 }
 
 // ── Backend Vercel Blob ───────────────────────────────────────────────────────
+//
+// Sobrescribir un mismo pathname en Blob tarda hasta 60s en propagarse por su
+// CDN (lecturas obsoletas). Solución: cada escritura crea un pathname NUEVO
+// ("clave/v<timestamp>") y la lectura resuelve la última versión con list().
+// El contenido de cada versión es inmutable, así que la caché no estorba.
+// Las versiones antiguas se borran tras escribir (best effort).
 
 // require perezoso: en local el paquete no hace falta para nada
 let blobSdk = null;
@@ -53,40 +59,50 @@ function sdk() {
   return blobSdk;
 }
 
-// Cachea pathname → url para no hacer un list() en cada lectura
-const urlCache = new Map();
+const SEP_VERSION = '/v';
 
-async function blobUrl(clave) {
-  if (urlCache.has(clave)) return urlCache.get(clave);
-  const { blobs } = await sdk().list({ prefix: clave, limit: 10 });
-  const blob = blobs.find((b) => b.pathname === clave);
-  if (!blob) return null;
-  urlCache.set(clave, blob.url);
-  return blob.url;
+// Última versión de una clave: pathname "clave/v<ts>" con el ts más alto
+async function blobUltimaVersion(clave) {
+  const { blobs } = await sdk().list({ prefix: `${clave}${SEP_VERSION}`, limit: 1000 });
+  if (!blobs.length) return null;
+  blobs.sort((a, b) => (a.pathname < b.pathname ? 1 : -1));
+  return blobs[0];
 }
 
 async function blobLeer(clave) {
-  const url = await blobUrl(clave);
-  if (!url) return null;
-  // El CDN de Blob cachea por URL: la query única fuerza contenido fresco
-  const res = await fetch(`${url}?v=${Date.now()}`);
+  const version = await blobUltimaVersion(clave);
+  if (!version) return null;
+  const res = await fetch(version.url);
   if (!res.ok) return null;
   return res.text();
 }
 
 async function blobEscribir(clave, texto) {
-  const { url } = await sdk().put(clave, texto, {
+  // timestamp con padding fijo para que el orden lexicográfico = orden temporal
+  const ts = String(Date.now()).padStart(15, '0');
+  await sdk().put(`${clave}${SEP_VERSION}${ts}`, texto, {
     access: 'public',
     addRandomSuffix: false,
-    allowOverwrite: true,
-    cacheControlMaxAge: 60, // mínimo que permite Blob
+    cacheControlMaxAge: 60,
   });
-  urlCache.set(clave, url);
+
+  // Borra versiones anteriores; si falla no pasa nada (leer coge la última)
+  try {
+    const { blobs } = await sdk().list({ prefix: `${clave}${SEP_VERSION}`, limit: 1000 });
+    const viejas = blobs.filter((b) => !b.pathname.endsWith(`${SEP_VERSION}${ts}`)).map((b) => b.url);
+    if (viejas.length) await sdk().del(viejas);
+  } catch { /* limpieza best effort */ }
 }
 
 async function blobListar(prefijo) {
   const { blobs } = await sdk().list({ prefix: prefijo, limit: 1000 });
-  return blobs.map((b) => b.pathname);
+  // Quita el sufijo de versión y deduplica: devuelve claves lógicas
+  return [...new Set(
+    blobs.map((b) => {
+      const i = b.pathname.lastIndexOf(SEP_VERSION);
+      return i === -1 ? b.pathname : b.pathname.slice(0, i);
+    })
+  )];
 }
 
 // ── Interfaz pública ──────────────────────────────────────────────────────────
@@ -119,7 +135,7 @@ async function listar(prefijo) {
 }
 
 async function existe(clave) {
-  if (usaBlob()) return (await blobUrl(clave)) !== null;
+  if (usaBlob()) return (await blobUltimaVersion(clave)) !== null;
   return fs.existsSync(path.join(RAIZ, clave));
 }
 
