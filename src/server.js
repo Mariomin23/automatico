@@ -2,6 +2,7 @@ require('dotenv').config();
 
 const express = require('express');
 const path = require('path');
+const crypto = require('crypto');
 const store = require('./utils/store');
 const llm = require('./ai/llm');
 const { runBusqueda } = require('./run');
@@ -12,7 +13,45 @@ const PORT = process.env.PORT || 3000;
 
 app.disable('x-powered-by');
 app.use(express.static(path.join(__dirname, '../public')));
-app.use(express.json());
+// Límite de tamaño del body: nadie necesita mandar más de 100kb a esta API
+app.use(express.json({ limit: '100kb' }));
+
+// ── Anti fuerza bruta: máximo de intentos de token por IP ────────────────────
+// Tras MAX_INTENTOS fallos en VENTANA_MS, la IP queda bloqueada (429) hasta
+// que la ventana expire. El registro vive en memoria: en serverless cada
+// instancia tiene el suyo, suficiente contra ataques casuales.
+
+const MAX_INTENTOS = 5;
+const VENTANA_MS = 15 * 60 * 1000; // 15 minutos
+
+const intentosFallidos = new Map(); // ip → [timestamps de fallos]
+
+function ipDe(req) {
+  // En Vercel la IP real llega en x-forwarded-for (primer valor)
+  return (req.headers['x-forwarded-for'] || req.socket.remoteAddress || '?')
+    .split(',')[0].trim();
+}
+
+function fallosRecientes(ip) {
+  const ahora = Date.now();
+  const lista = (intentosFallidos.get(ip) || []).filter((t) => ahora - t < VENTANA_MS);
+  if (lista.length) intentosFallidos.set(ip, lista);
+  else intentosFallidos.delete(ip);
+  return lista;
+}
+
+function registrarFallo(ip) {
+  // Tope de IPs registradas para que el Map no crezca sin límite
+  if (intentosFallidos.size > 1000) intentosFallidos.clear();
+  intentosFallidos.set(ip, [...fallosRecientes(ip), Date.now()]);
+}
+
+// Comparación en tiempo constante: evita deducir el token midiendo tiempos
+function tokenCorrecto(enviado, token) {
+  const a = Buffer.from(String(enviado || ''));
+  const b = Buffer.from(token);
+  return a.length === b.length && crypto.timingSafeEqual(a, b);
+}
 
 // Token de administración: protege los endpoints que escriben datos o cuestan
 // dinero (lanzar búsquedas, generar cartas, cambiar estados del CRM).
@@ -21,8 +60,19 @@ app.use(express.json());
 function requiereAdmin(req, res, next) {
   const token = process.env.ADMIN_TOKEN;
   if (!token) return next();
+
+  const ip = ipDe(req);
+  if (fallosRecientes(ip).length >= MAX_INTENTOS) {
+    return res.status(429).json({ error: 'Demasiados intentos. Espera 15 minutos.' });
+  }
+
   const enviado = req.get('x-admin-token') || req.query.token;
-  if (enviado === token) return next();
+  if (tokenCorrecto(enviado, token)) {
+    intentosFallidos.delete(ip); // acierto: limpia el contador
+    return next();
+  }
+
+  registrarFallo(ip);
   res.status(401).json({ error: 'No autorizado' });
 }
 
@@ -104,6 +154,14 @@ app.post('/api/carta/generar', requiereAdmin, async (req, res) => {
 
   const { titulo, empresa, descripcion, url, date, slug } = req.body;
   if (!titulo || !empresa) return res.status(400).json({ error: 'Faltan datos de la oferta' });
+
+  // Validación de entradas: solo strings con longitud acotada llegan al prompt
+  const textoValido = (v, max) => typeof v === 'string' && v.length <= max;
+  if (!textoValido(titulo, 300) || !textoValido(empresa, 200)
+    || (descripcion != null && !textoValido(descripcion, 5000))
+    || (url != null && !textoValido(url, 1000))) {
+    return res.status(400).json({ error: 'Datos de oferta inválidos' });
+  }
 
   res.setHeader('Content-Type', 'text/event-stream');
   res.setHeader('Cache-Control', 'no-cache');
