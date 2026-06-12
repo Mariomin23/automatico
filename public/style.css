@@ -25,6 +25,7 @@ body {
   background: var(--bg);
   color: var(--text);
   height: 100vh;
+  height: 100dvh;
   display: flex;
   flex-direction: column;
 }
@@ -592,4 +593,101 @@ mark.stack-hl {
   flex-wrap: wrap;
   padding: 12px 20px;
   border-top: 1px solid var(--border);
+}
+
+/* ── Móvil ── */
+@media (max-width: 768px) {
+  header {
+    padding: 0 16px;
+  }
+
+  /* Sidebar pasa a tira horizontal bajo el header */
+  .layout {
+    flex-direction: column;
+  }
+
+  aside {
+    width: 100%;
+    flex-direction: row;
+    align-items: center;
+    gap: 8px;
+    padding: 10px 12px;
+    overflow-y: visible;
+  }
+
+  .sidebar-section {
+    display: flex;
+    align-items: center;
+    flex-shrink: 0;
+    padding: 0;
+  }
+
+  .sidebar-label { display: none; }
+
+  .run-btn {
+    width: auto;
+    margin-bottom: 0;
+    white-space: nowrap;
+  }
+
+  .date-list {
+    display: flex;
+    gap: 6px;
+    padding: 0;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .date-item {
+    flex-shrink: 0;
+    gap: 6px;
+    white-space: nowrap;
+  }
+
+  main {
+    padding: 12px;
+  }
+
+  .stats-bar {
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+
+  .stat-card {
+    flex: 1;
+    padding: 10px 12px;
+  }
+
+  .stat-card .stat-value {
+    font-size: 18px;
+    white-space: nowrap;
+  }
+
+  .filter-input { min-width: 100%; }
+  .filter-select { flex: 1; }
+  .filter-count { width: 100%; margin-left: 0; }
+
+  .job-foot {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .estado-control { justify-content: stretch; }
+  .estado-btn { flex: 1; }
+
+  .job-actions { flex-direction: column; }
+  .job-actions .btn { justify-content: center; }
+
+  /* Panel de cartas a pantalla completa */
+  .carta-panel {
+    width: 100%;
+    max-width: 100%;
+  }
+
+  .modal {
+    max-height: 90vh;
+    max-height: 90dvh;
+  }
+
+  .log-area { min-height: 200px; }
 }
