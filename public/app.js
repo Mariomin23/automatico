@@ -64,23 +64,31 @@ async function checkStatus() {
     cartasDisponibles = data.cartas !== false;
     const dot = document.getElementById('statusDot');
     const label = document.getElementById('statusLabel');
+    const container = document.querySelector('.header-right');
+    
+    let txt = '';
     if (!cartasDisponibles) {
       dot.className = 'status-dot offline';
-      label.textContent = 'Cartas: solo en entorno local';
-      return;
-    }
-    const nombre = data.proveedor === 'groq' ? 'Groq' : 'Ollama';
-    if (data.ollama) {
-      dot.className = 'status-dot online';
-      label.textContent = `${nombre} OK · ${data.modelo}`;
+      txt = 'Cartas: solo en entorno local';
     } else {
-      dot.className = 'status-dot offline';
-      label.textContent = data.proveedor === 'groq'
-        ? 'Groq offline — revisa GROQ_API_KEY'
-        : 'Ollama offline — ejecuta: ollama serve';
+      const nombre = data.proveedor === 'groq' ? 'Groq' : 'Ollama';
+      if (data.ollama) {
+        dot.className = 'status-dot online';
+        txt = `${nombre} OK · ${data.modelo}`;
+      } else {
+        dot.className = 'status-dot offline';
+        txt = data.proveedor === 'groq'
+          ? 'Groq offline — revisa GROQ_API_KEY'
+          : 'Ollama offline — ejecuta: ollama serve';
+      }
     }
+    
+    if (label) label.textContent = txt;
+    if (dot) dot.setAttribute('title', txt);
+    if (container) container.setAttribute('title', txt);
   } catch {
-    document.getElementById('statusLabel').textContent = 'Error conectando';
+    const label = document.getElementById('statusLabel');
+    if (label) label.textContent = 'Error conectando';
   }
 }
 
@@ -341,7 +349,7 @@ async function setEstado(slug, estado, idx) {
 
 function labelBotonCarta(date, slug) {
   const tieneCarta = (runData[date]?.cartas || []).includes(slug);
-  return tieneCarta ? '📄 Ver carta guardada' : '✉️ Generar carta';
+  return tieneCarta ? '📄 Ver carta' : '✉️ Generar carta';
 }
 
 function abrePanel(oferta) {
