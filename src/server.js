@@ -10,8 +10,24 @@ const { promptCarta } = require('./ai/prompts');
 const app = express();
 const PORT = process.env.PORT || 3000;
 
+app.disable('x-powered-by');
 app.use(express.static(path.join(__dirname, '../public')));
 app.use(express.json());
+
+// Token de administración: protege los endpoints que escriben datos o cuestan
+// dinero (lanzar búsquedas, generar cartas, cambiar estados del CRM).
+// Si ADMIN_TOKEN no está configurado (desarrollo local), no se exige nada.
+// El SSE de búsqueda usa ?token= porque EventSource no permite headers.
+function requiereAdmin(req, res, next) {
+  const token = process.env.ADMIN_TOKEN;
+  if (!token) return next();
+  const enviado = req.get('x-admin-token') || req.query.token;
+  if (enviado === token) return next();
+  res.status(401).json({ error: 'No autorizado' });
+}
+
+// Comprobación de token para el frontend (no hace nada más)
+app.get('/api/admin/check', requiereAdmin, (req, res) => res.json({ ok: true }));
 
 // Solo acepta fechas YYYY-MM-DD y slugs alfanuméricos — evita claves arbitrarias
 const FECHA_OK = (d) => /^\d{4}-\d{2}-\d{2}$/.test(d);
@@ -76,7 +92,7 @@ app.get('/api/runs/:date/carta/:slug', async (req, res) => {
 });
 
 // Genera carta con streaming SSE — el cliente ve tokens en tiempo real
-app.post('/api/carta/generar', async (req, res) => {
+app.post('/api/carta/generar', requiereAdmin, async (req, res) => {
   const { titulo, empresa, descripcion, url, date, slug } = req.body;
   if (!titulo || !empresa) return res.status(400).json({ error: 'Faltan datos de la oferta' });
 
@@ -129,7 +145,7 @@ app.get('/api/estados', async (req, res) => {
 });
 
 // Cambia el estado de una oferta
-app.post('/api/estados/:slug', async (req, res) => {
+app.post('/api/estados/:slug', requiereAdmin, async (req, res) => {
   if (!SLUG_OK(req.params.slug)) return res.status(400).json({ error: 'Slug inválido' });
 
   const { estado } = req.body || {};
@@ -160,7 +176,7 @@ app.get('/api/status', async (req, res) => {
 });
 
 // Lanza una nueva búsqueda con SSE para logs en tiempo real
-app.get('/api/run/start', async (req, res) => {
+app.get('/api/run/start', requiereAdmin, async (req, res) => {
   res.setHeader('Content-Type', 'text/event-stream');
   res.setHeader('Cache-Control', 'no-cache');
   res.setHeader('Connection', 'keep-alive');

@@ -23,6 +23,36 @@ async function init() {
   await loadRuns();
 }
 
+// ── Token de administración ───────────────────────────────────────────────────
+// En producción las acciones que escriben (búsquedas, cartas, CRM) piden un
+// token que solo tiene el dueño. En local el servidor no lo exige.
+
+function adminToken() {
+  return localStorage.getItem('adminToken') || '';
+}
+
+function adminHeaders() {
+  const t = adminToken();
+  return t ? { 'X-Admin-Token': t } : {};
+}
+
+async function tokenValido() {
+  const res = await fetch('/api/admin/check', { headers: adminHeaders() });
+  return res.ok;
+}
+
+// Devuelve true si hay permiso (pidiendo el token al usuario si hace falta)
+async function asegurarAdmin() {
+  if (await tokenValido()) return true;
+  const t = window.prompt('Acción reservada al dueño del dashboard.\nToken de administración:');
+  if (!t) return false;
+  localStorage.setItem('adminToken', t.trim());
+  if (await tokenValido()) return true;
+  alert('Token incorrecto');
+  localStorage.removeItem('adminToken');
+  return false;
+}
+
 // ── Ollama status ─────────────────────────────────────────────────────────────
 
 async function checkStatus() {
@@ -271,11 +301,19 @@ function botonesEstado(slug, idx, actual) {
 
 async function setEstado(slug, estado, idx) {
   try {
-    const res = await fetch(`/api/estados/${slug}`, {
+    let res = await fetch(`/api/estados/${slug}`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', ...adminHeaders() },
       body: JSON.stringify({ estado }),
     });
+    if (res.status === 401) {
+      if (!(await asegurarAdmin())) return;
+      res = await fetch(`/api/estados/${slug}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...adminHeaders() },
+        body: JSON.stringify({ estado }),
+      });
+    }
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
   } catch {
     return; // si falla el guardado, no cambia la UI
@@ -350,7 +388,13 @@ async function abrirCarta(idx, date, regenerar = false) {
     }
   }
 
-  msgEl.textContent = '⏳ Generando con Ollama...';
+  // Generar cuesta recursos: requiere token de administración en producción
+  if (!(await asegurarAdmin())) {
+    msgEl.textContent = 'Generación cancelada: hace falta el token de administración.';
+    return;
+  }
+
+  msgEl.textContent = '⏳ Generando...';
   const controller = new AbortController();
   cartaCtx.controller = controller;
   footer.innerHTML = `<button class="btn" onclick="detenerCarta()" style="color:var(--red);border-color:var(--red)">⏹ Detener</button>`;
@@ -358,7 +402,7 @@ async function abrirCarta(idx, date, regenerar = false) {
   try {
     const res = await fetch('/api/carta/generar', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', ...adminHeaders() },
       signal: controller.signal,
       body: JSON.stringify({
         titulo: oferta.titulo,
@@ -455,7 +499,10 @@ function descargarCarta(nombre) {
 
 // ── Nueva búsqueda con logs en vivo ───────────────────────────────────────────
 
-function startRun() {
+async function startRun() {
+  // Lanzar búsquedas queda reservado al dueño en producción
+  if (!(await asegurarAdmin())) return;
+
   const overlay = document.getElementById('modalOverlay');
   const logArea = document.getElementById('logArea');
   const title = document.getElementById('modalTitle');
@@ -468,7 +515,9 @@ function startRun() {
 
   if (runSource) runSource.close();
 
-  runSource = new EventSource('/api/run/start');
+  // EventSource no permite headers: el token va en la query
+  const qs = adminToken() ? `?token=${encodeURIComponent(adminToken())}` : '';
+  runSource = new EventSource(`/api/run/start${qs}`);
 
   runSource.onmessage = (e) => {
     const msg = JSON.parse(e.data);
