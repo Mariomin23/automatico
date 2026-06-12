@@ -355,6 +355,38 @@ Diseño completo en `docs/superpowers/specs/2026-06-11-dashboard-scraper-mejoras
 
 5. **Slug único por oferta.** Antes slug = solo empresa: dos ofertas de la misma empresa compartían fichero de carta y se sobrescribían. Ahora slug = `empresa + hash md5 corto de la URL` (6 chars).
 
-6. **Bug de fecha por UTC.** `toISOString()` devuelve fecha UTC: un run a la 01:42 hora de Madrid (verano = UTC+2) escribía en la carpeta del día ANTERIOR. Ahora la fecha de carpeta es local (`toLocaleDateString('sv-SE')`, que da formato YYYY-MM-DD).
+6. **Bug de fecha por UTC.** `toISOString()` devuelve fecha UTC: un run a la 01:42 hora de Madrid (verano = UTC+2) escribía en la carpeta del día ANTERIOR. Ahora la fecha de carpeta es local (`toLocaleDateString('sv-SE')`, que da formato YYYY-MM-DD). Pero tiene que enseñar eñ formato DD-MM-YYYY
 
 7. **Menores.** `GET /api/runs` devuelve `[{date, total}]` para que el sidebar no haga una petición por fecha (antes N+1); default de modelo unificado a `llama3` en `/api/status`; validación estricta de `:date` y `:slug` en rutas (evita leer/escribir fuera de `output/`); `escapeHtml` escapa también comillas; badges nuevos en tarjeta: 🆕 Nueva, salario y modalidad.
+### 2026-06-12 — Fase 2 ejecutada (diseño + utilidad del dashboard)
+
+Los 9 puntos del roadmap Fase 2 implementados. Archivos tocados: `src/server.js`, `public/app.js`, `public/index.html`, `public/style.css`. Sin paquetes nuevos.
+
+1. **Tarjetas rediseñadas:** cabecera (puesto + empresa + badges), descripción y pie de acciones separados por grid; ya no hay acordeón de tarjeta entera ni chevron.
+2. **Descripción colapsable:** 3 líneas con `-webkit-line-clamp` + degradado fade-out y botón "Leer más…" / "Leer menos" (solo si la descripción supera 180 chars).
+3. **Badges unificados:** píldoras pastel bajo el título con iconos — 🆕 Nueva (verde), 💶 salario (ámbar), 🏠 modalidad (violeta), 🧭 experiencia (color por nivel), 📌 fuente (gris).
+4. **Botón de carta diferenciado:** "Ver carta guardada" usa estilo `.btn.secondary` (gris); "Generar carta" mantiene el azul primario. Cambia solo al terminar una generación.
+5. **Filtros en tiempo real:** barra sobre el grid con buscador de texto (título+empresa+descripción), select de modalidad y checkbox "Solo nuevas"; contador "X de Y ofertas". Filtra ocultando tarjetas con clase `.hidden`, sin re-render.
+6. **Visor de cartas en panel lateral (slide-over):** las cartas (guardadas y generación SSE en streaming) se muestran en panel deslizable derecho con "Copiar al portapapeles", "Descargar .txt", "Regenerar" y "Detener" durante la generación. Cerrar el panel aborta la generación en curso.
+7. **Fechas DD-MM-YYYY:** sidebar y stat de fecha muestran `12-06-2026`; las carpetas en disco siguen siendo `YYYY-MM-DD`.
+8. **CRM de candidaturas:** control segmentado `⏳ Pendiente | ✅ Aplicado | ❌ Descartado` en el pie de cada tarjeta. Persistencia en `data/applications_status.json` (`{ slug: estado }`; "pendiente" no se guarda). Endpoints nuevos: `GET /api/estados` y `POST /api/estados/:slug` (valida slug y estado). Aplicado = borde verde; Descartado = borde rojo + tarjeta atenuada.
+9. **Resaltado de stack:** regex con límites de palabra ilumina React, Node/Node.js, Angular, TypeScript, JavaScript, MongoDB y Express en las descripciones (`<mark class="stack-hl">`), aplicado tras `escapeHtml`.
+
+Verificado con Playwright headless: 20 tarjetas, filtros, CRM (persistencia ida/vuelta), leer más, panel de carta guardada (1230 chars) y cierre — sin errores JS en consola.
+
+---
+
+## Próximos Cambios y Roadmap (Fase 2)
+
+### 🎨 Cambios de Diseño y Estéticos
+1. **Jerarquía Visual de Tarjetas (Cards):** Rediseñar las tarjetas de las ofertas mediante Grid/Flexbox, dividiendo claramente la cabecera (Puesto, Empresa y Badges), el extracto de la descripción y un pie de tarjeta para acciones.
+2. **Acordeón Colapsable:** Limitar la descripción inicial a 3 líneas con un efecto de degradado (*fade-out*) y un botón de "Leer más..." para evitar el scroll infinito en el dashboard.
+3. **Unificación de Badges:** Agrupar todas las etiquetas (Nueva, Salario, Modalidad, Experiencia) en una cuadrícula limpia justo debajo del título del puesto, asignando un sistema de iconos visuales y colores pastel con propósito.
+4. **Estados de Botón Diferenciados:** Modificar visualmente el botón de "Ver carta guardada" con un estilo secundario (outline o grisáceo) para diferenciar de un vistazo las ofertas ya gestionadas de las pendientes.
+
+### ⚙️ Cambios de Funcionamiento y Utilidad
+1. **Filtros en Tiempo Real (Frontend):** Implementar una barra superior en `public/app.js` para filtrar el JSON cargado dinámicamente por: "Solo nuevas", "Modalidad (Remoto/Híbrido/Presencial)" y un buscador por texto para tecnologías.
+2. **Visor de Cartas Integrado:** Sustituir la carga en bloque de la carta por un panel lateral deslizable (*slide-over*) o una ventana modal nativa (`<dialog>`), incluyendo un botón funcional de **"Copiar al portapapeles"**.
+3. **Formateador de Fechas en Sidebar:** Corregir la vista del menú lateral. Aunque la carpeta en disco se mantenga como `YYYY-MM-DD` por ordenación del sistema, el frontend mapeará y formateará la string a `DD-MM-YYYY` para la lectura de Mario.
+4. **CRM de Candidaturas (Pipeline de Estados):** Crear un sistema local de estados para cada oferta `[ Pendiente ⏳ | Aplicado ✅ | Descartado ❌ ]`. Se guardará en `data/applications_status.json` mapeado por el `slug` único de la oferta.
+5. **Resaltado de Stack Técnico:** Iluminar de forma automatizada en las descripciones las palabras clave del stack principal de Mario (React, Node, Angular, TypeScript) para identificar el porcentaje de *match* al instante.

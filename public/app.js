@@ -2,10 +2,24 @@ let selectedDate = null;
 let runSource = null;
 const runData = {};
 
+// CRM: estados por slug ({ slug: 'aplicado' | 'descartado' }); 'pendiente' = sin entrada
+let estados = {};
+
+// Filtros activos del run visible
+const filtros = { soloNuevas: false, modalidad: '', texto: '' };
+
+// Contexto de la carta abierta en el panel lateral
+let cartaCtx = null; // { idx, date, controller }
+
 // ── Init ──────────────────────────────────────────────────────────────────────
 
 async function init() {
   checkStatus();
+  try {
+    estados = await api('/api/estados');
+  } catch {
+    estados = {};
+  }
   await loadRuns();
 }
 
@@ -69,7 +83,6 @@ async function loadRun(date) {
   let data;
   try {
     data = await api(`/api/runs/${date}`);
-    runData[date] = data;
   } catch {
     main.innerHTML = '<div class="empty-state"><p>Error cargando datos</p></div>';
     return;
@@ -81,6 +94,11 @@ async function loadRun(date) {
     .sort((a, b) => (b.nueva ? 1 : 0) - (a.nueva ? 1 : 0) || a._exp - b._exp);
 
   runData[date] = { ...data, ofertas: ofertasOrdenadas, cartas: data.cartas || [] };
+
+  // Cada run empieza con los filtros limpios
+  filtros.soloNuevas = false;
+  filtros.modalidad = '';
+  filtros.texto = '';
 
   const numNuevas = ofertasOrdenadas.filter((o) => o.nueva).length;
 
@@ -95,9 +113,24 @@ async function loadRun(date) {
         <div class="stat-label">Nuevas</div>
       </div>
       <div class="stat-card">
-        <div class="stat-value">${data.fecha}</div>
+        <div class="stat-value">${formatDate(date)}</div>
         <div class="stat-label">Fecha</div>
       </div>
+    </div>
+    <div class="filters-bar">
+      <input type="search" class="filter-input" id="fTexto" placeholder="🔍 Buscar tecnología, empresa, puesto..."
+             oninput="setFiltro('texto', this.value)">
+      <select class="filter-select" id="fModalidad" onchange="setFiltro('modalidad', this.value)">
+        <option value="">Modalidad: todas</option>
+        <option value="remoto">Remoto</option>
+        <option value="híbrido">Híbrido</option>
+        <option value="presencial">Presencial</option>
+      </select>
+      <label class="filter-check">
+        <input type="checkbox" id="fNuevas" onchange="setFiltro('soloNuevas', this.checked)">
+        Solo nuevas
+      </label>
+      <span class="filter-count" id="filterCount"></span>
     </div>
     <div class="jobs-grid" id="jobsGrid"></div>
   `;
@@ -106,6 +139,49 @@ async function loadRun(date) {
   ofertasOrdenadas.forEach((oferta, i) => {
     grid.appendChild(buildJobCard(oferta, date, i));
   });
+
+  aplicarFiltros();
+}
+
+// ── Filtros en tiempo real ────────────────────────────────────────────────────
+
+function setFiltro(clave, valor) {
+  filtros[clave] = typeof valor === 'string' ? valor.trim().toLowerCase() : valor;
+  aplicarFiltros();
+}
+
+function aplicarFiltros() {
+  const data = runData[selectedDate];
+  if (!data) return;
+
+  let visibles = 0;
+
+  data.ofertas.forEach((oferta, idx) => {
+    const card = document.getElementById(`card-${idx}`);
+    if (!card) return;
+
+    let visible = true;
+
+    if (filtros.soloNuevas && !oferta.nueva) visible = false;
+
+    if (visible && filtros.modalidad) {
+      visible = (oferta.modalidad || '').toLowerCase().includes(filtros.modalidad);
+    }
+
+    if (visible && filtros.texto) {
+      const texto = `${oferta.titulo} ${oferta.empresa} ${oferta.descripcion || ''}`.toLowerCase();
+      visible = texto.includes(filtros.texto);
+    }
+
+    card.classList.toggle('hidden', !visible);
+    if (visible) visibles++;
+  });
+
+  const count = document.getElementById('filterCount');
+  if (count) {
+    const hayFiltros = filtros.soloNuevas || filtros.modalidad || filtros.texto;
+    count.textContent = hayFiltros ? `${visibles} de ${data.ofertas.length} ofertas` : '';
+  }
 }
 
 // ── Job card ──────────────────────────────────────────────────────────────────
@@ -115,117 +191,166 @@ function buildJobCard(oferta, date, idx) {
   card.className = 'job-card';
   card.id = `card-${idx}`;
 
-  const desc = oferta.descripcion
-    ? `<p class="job-motivo">${escapeHtml(oferta.descripcion.slice(0, 300))}${oferta.descripcion.length > 300 ? '…' : ''}</p>`
-    : '';
+  const estado = estados[oferta.slug] || 'pendiente';
+  if (estado !== 'pendiente') card.classList.add(`estado-${estado}`);
 
   const expLabel = expTexto(oferta._exp);
   const expClass = oferta._exp === 0 ? 'exp-none' : oferta._exp <= 1 ? 'exp-low' : oferta._exp <= 3 ? 'exp-mid' : 'exp-high';
 
-  const nuevaBadge = oferta.nueva ? '<span class="nueva-badge">🆕 Nueva</span>' : '';
-  const salarioBadge = oferta.salario ? `<span class="salario-badge">💶 ${escapeHtml(oferta.salario)}</span>` : '';
-  const modalidadBadge = oferta.modalidad ? `<span class="modalidad-badge">${escapeHtml(oferta.modalidad)}</span>` : '';
+  // Badges agrupados bajo el título: icono + color pastel con propósito
+  const badges = [
+    oferta.nueva ? '<span class="badge badge-nueva">🆕 Nueva</span>' : '',
+    oferta.salario ? `<span class="badge badge-salario">💶 ${escapeHtml(oferta.salario)}</span>` : '',
+    oferta.modalidad ? `<span class="badge badge-modalidad">🏠 ${escapeHtml(oferta.modalidad)}</span>` : '',
+    `<span class="badge badge-exp ${expClass}">🧭 ${expLabel}</span>`,
+    oferta.fuente ? `<span class="badge badge-fuente">📌 ${escapeHtml(oferta.fuente)}</span>` : '',
+  ].filter(Boolean).join('');
+
+  // Descripción completa con stack resaltado, limitada a 3 líneas con fade
+  const descHtml = oferta.descripcion ? resaltarStack(escapeHtml(oferta.descripcion)) : '';
+  const necesitaLeerMas = (oferta.descripcion || '').length > 180;
 
   const tieneCarta = (runData[date]?.cartas || []).includes(oferta.slug);
-  const labelCarta = tieneCarta ? '📄 Ver carta guardada' : '✉️ Generar carta de presentación';
 
   card.innerHTML = `
-    <div class="job-header" onclick="toggleCard(${idx})">
-      <div class="job-info">
-        <div class="job-title">${escapeHtml(oferta.titulo)}</div>
-        <div class="job-company">${escapeHtml(oferta.empresa)}</div>
-      </div>
-      <div class="job-meta">
-        ${nuevaBadge}
-        ${salarioBadge}
-        ${modalidadBadge}
-        <span class="exp-badge ${expClass}">${expLabel}</span>
-        <span class="fuente-badge">${oferta.fuente || ''}</span>
-        <span class="chevron">▶</span>
-      </div>
+    <div class="job-head">
+      <div class="job-title">${escapeHtml(oferta.titulo)}</div>
+      <div class="job-company">${escapeHtml(oferta.empresa)}</div>
+      <div class="job-badges">${badges}</div>
     </div>
-    <div class="job-body">
-      ${desc}
+    ${descHtml ? `
+    <div class="job-desc-wrap">
+      <div class="job-desc clamp" id="desc-${idx}">${descHtml}</div>
+      ${necesitaLeerMas ? `<button class="leer-mas" id="leermas-${idx}" onclick="toggleDesc(${idx})">Leer más…</button>` : ''}
+    </div>` : ''}
+    <div class="job-foot">
+      <div class="estado-control" id="estado-${idx}">
+        ${botonesEstado(oferta.slug, idx, estado)}
+      </div>
       <div class="job-actions">
         <a class="btn" href="${escapeHtml(oferta.url)}" target="_blank" rel="noopener">🔗 Ver oferta</a>
-        <button class="btn primary" id="btn-carta-${idx}" onclick="generarCarta(${idx}, '${date}')">${labelCarta}</button>
+        <button class="btn ${tieneCarta ? 'secondary' : 'primary'}" id="btn-carta-${idx}"
+                onclick="abrirCarta(${idx}, '${date}')">${labelBotonCarta(date, oferta.slug)}</button>
       </div>
-      <div id="carta-${idx}"></div>
     </div>
   `;
 
   return card;
 }
 
-function toggleCard(idx) {
-  const card = document.getElementById(`card-${idx}`);
-  card.classList.toggle('open');
+function toggleDesc(idx) {
+  const desc = document.getElementById(`desc-${idx}`);
+  const btn = document.getElementById(`leermas-${idx}`);
+  const clamped = desc.classList.toggle('clamp');
+  btn.textContent = clamped ? 'Leer más…' : 'Leer menos';
 }
 
+// Resalta el stack principal de Mario en la descripción (ya escapada)
+function resaltarStack(textoEscapado) {
+  const re = /\b(node\.?js|node|react|angular|typescript|javascript|mongodb|express)\b/gi;
+  return textoEscapado.replace(re, '<mark class="stack-hl">$1</mark>');
+}
+
+// ── CRM de candidaturas ───────────────────────────────────────────────────────
+
+const ESTADOS_UI = [
+  { id: 'pendiente', label: '⏳ Pendiente' },
+  { id: 'aplicado', label: '✅ Aplicado' },
+  { id: 'descartado', label: '❌ Descartado' },
+];
+
+function botonesEstado(slug, idx, actual) {
+  return ESTADOS_UI.map(({ id, label }) => `
+    <button class="estado-btn ${id} ${actual === id ? 'active' : ''}"
+            onclick="setEstado('${slug}', '${id}', ${idx})">${label}</button>
+  `).join('');
+}
+
+async function setEstado(slug, estado, idx) {
+  try {
+    const res = await fetch(`/api/estados/${slug}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ estado }),
+    });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  } catch {
+    return; // si falla el guardado, no cambia la UI
+  }
+
+  if (estado === 'pendiente') delete estados[slug];
+  else estados[slug] = estado;
+
+  const card = document.getElementById(`card-${idx}`);
+  card.classList.remove('estado-aplicado', 'estado-descartado');
+  if (estado !== 'pendiente') card.classList.add(`estado-${estado}`);
+  document.getElementById(`estado-${idx}`).innerHTML = botonesEstado(slug, idx, estado);
+}
+
+// ── Cartas: panel lateral ─────────────────────────────────────────────────────
 
 function labelBotonCarta(date, slug) {
   const tieneCarta = (runData[date]?.cartas || []).includes(slug);
-  return tieneCarta ? '📄 Ver carta guardada' : '✉️ Generar carta de presentación';
+  return tieneCarta ? '📄 Ver carta guardada' : '✉️ Generar carta';
+}
+
+function abrePanel(oferta) {
+  document.getElementById('panelTitle').textContent = oferta.titulo;
+  document.getElementById('panelSubtitle').textContent = oferta.empresa;
+  document.getElementById('panelCarta').textContent = '';
+  document.getElementById('panelMsg').textContent = '';
+  document.getElementById('panelFooter').innerHTML = '';
+  document.getElementById('panelOverlay').classList.add('open');
+  const panel = document.getElementById('cartaPanel');
+  panel.classList.add('open');
+  panel.setAttribute('aria-hidden', 'false');
+}
+
+function cerrarPanel() {
+  if (cartaCtx?.controller) cartaCtx.controller.abort();
+  cartaCtx = null;
+  document.getElementById('panelOverlay').classList.remove('open');
+  const panel = document.getElementById('cartaPanel');
+  panel.classList.remove('open');
+  panel.setAttribute('aria-hidden', 'true');
 }
 
 function accionesCarta(idx, date, nombreFichero) {
   return `
-    <div style="display:flex;gap:8px;margin-top:8px">
-      <button class="btn" onclick="copyCarta(${idx})">📋 Copiar</button>
-      <button class="btn" onclick="descargarCarta(${idx}, '${nombreFichero}')">⬇️ Descargar .txt</button>
-      <button class="btn" onclick="generarCarta(${idx}, '${date}', true)">🔄 Regenerar</button>
-    </div>
+    <button class="btn primary" onclick="copyCarta()">📋 Copiar al portapapeles</button>
+    <button class="btn" onclick="descargarCarta('${nombreFichero}')">⬇️ Descargar .txt</button>
+    <button class="btn" onclick="abrirCarta(${idx}, '${date}', true)">🔄 Regenerar</button>
   `;
 }
 
-async function generarCarta(idx, date, regenerar = false) {
-  const container = document.getElementById(`carta-${idx}`);
-  const btn = document.getElementById(`btn-carta-${idx}`);
-
+async function abrirCarta(idx, date, regenerar = false) {
   const oferta = runData[date]?.ofertas[idx];
-  if (!oferta) {
-    container.innerHTML = '<p class="carta-loading">Error: oferta no encontrada</p>';
-    return;
-  }
+  if (!oferta) return;
 
-  // Si ya hay carta visible y no es regeneración, la oculta
-  if (container.innerHTML && !regenerar) {
-    container.innerHTML = '';
-    btn.textContent = labelBotonCarta(date, oferta.slug);
-    btn.disabled = false;
-    return;
-  }
+  abrePanel(oferta);
+  cartaCtx = { idx, date, controller: null };
 
+  const cartaEl = document.getElementById('panelCarta');
+  const msgEl = document.getElementById('panelMsg');
+  const footer = document.getElementById('panelFooter');
   const nombreFichero = `carta_${oferta.slug}.txt`;
 
   // Carta guardada en disco: se muestra al instante, sin llamar a Ollama
   if (!regenerar && (runData[date].cartas || []).includes(oferta.slug)) {
     try {
       const data = await api(`/api/runs/${date}/carta/${oferta.slug}`);
-      container.innerHTML = `<div class="carta-box" id="carta-text-${idx}"></div>` + accionesCarta(idx, date, nombreFichero);
-      document.getElementById(`carta-text-${idx}`).textContent = data.carta;
-      btn.textContent = '✉️ Ocultar carta';
+      cartaEl.textContent = data.carta;
+      footer.innerHTML = accionesCarta(idx, date, nombreFichero);
       return;
     } catch {
       // Si falla la lectura, cae al flujo de generación
     }
   }
 
-  btn.textContent = '⏳ Generando...';
-  btn.disabled = true;
-
+  msgEl.textContent = '⏳ Generando con Ollama...';
   const controller = new AbortController();
-
-  container.innerHTML = `
-    <div class="carta-box" id="carta-text-${idx}"></div>
-    <div style="margin-top:8px">
-      <button class="btn" id="btn-detener-${idx}" onclick="detenerCarta(${idx})" style="color:var(--red);border-color:var(--red)">⏹ Detener</button>
-    </div>
-  `;
-  const cartaEl = document.getElementById(`carta-text-${idx}`);
-
-  // Guarda el controller para poder abortar desde el botón
-  cartaEl._controller = controller;
+  cartaCtx.controller = controller;
+  footer.innerHTML = `<button class="btn" onclick="detenerCarta()" style="color:var(--red);border-color:var(--red)">⏹ Detener</button>`;
 
   try {
     const res = await fetch('/api/carta/generar', {
@@ -268,54 +393,53 @@ async function generarCarta(idx, date, regenerar = false) {
         }
 
         if (msg.done) {
-          // Reemplaza botón Detener por Copiar + Descargar + Regenerar
-          document.getElementById(`btn-detener-${idx}`)?.parentElement.remove();
-          container.insertAdjacentHTML('beforeend', accionesCarta(idx, date, nombreFichero));
-          // La carta queda guardada en disco — el botón pasa a "Ver carta"
+          msgEl.textContent = '';
+          footer.innerHTML = accionesCarta(idx, date, nombreFichero);
+          // La carta queda guardada en disco — el botón de la tarjeta pasa a "Ver carta"
           if (!runData[date].cartas.includes(oferta.slug)) runData[date].cartas.push(oferta.slug);
-          btn.textContent = '✉️ Ocultar carta';
-          btn.disabled = false;
+          const btn = document.getElementById(`btn-carta-${idx}`);
+          if (btn) {
+            btn.textContent = labelBotonCarta(date, oferta.slug);
+            btn.classList.remove('primary');
+            btn.classList.add('secondary');
+          }
         }
       }
     }
   } catch (err) {
     if (err.name === 'AbortError') {
       // Generación detenida por el usuario — deja el texto parcial visible
-      document.getElementById(`btn-detener-${idx}`)?.parentElement.remove();
       if (cartaEl.textContent.trim()) {
-        container.insertAdjacentHTML('beforeend', `
-          <p class="carta-loading" style="color:var(--orange)">Detenido. Texto parcial guardado.</p>
-          <div style="display:flex;gap:8px;margin-top:8px">
-            <button class="btn" onclick="copyCarta(${idx})">📋 Copiar parcial</button>
-            <button class="btn" onclick="descargarCarta(${idx}, '${nombreFichero}')">⬇️ Descargar .txt</button>
-          </div>
-        `);
+        msgEl.textContent = 'Detenido. Texto parcial visible.';
+        footer.innerHTML = `
+          <button class="btn" onclick="copyCarta()">📋 Copiar parcial</button>
+          <button class="btn" onclick="descargarCarta('${nombreFichero}')">⬇️ Descargar .txt</button>
+        `;
       }
     } else {
-      container.innerHTML = `<p class="carta-loading" style="color:var(--red)">Error: ${escapeHtml(err.message)}</p>`;
+      msgEl.textContent = `Error: ${err.message}`;
+      msgEl.style.color = 'var(--red)';
     }
-    btn.textContent = labelBotonCarta(date, oferta.slug);
-    btn.disabled = false;
   }
 }
 
-function detenerCarta(idx) {
-  const cartaEl = document.getElementById(`carta-text-${idx}`);
-  if (cartaEl?._controller) cartaEl._controller.abort();
+function detenerCarta() {
+  if (cartaCtx?.controller) cartaCtx.controller.abort();
 }
 
-function copyCarta(idx) {
-  const box = document.getElementById(`carta-text-${idx}`);
-  if (!box) return;
+function copyCarta() {
+  const box = document.getElementById('panelCarta');
+  if (!box || !box.textContent) return;
   navigator.clipboard.writeText(box.textContent).then(() => {
-    const btn = document.querySelector(`#carta-${idx} .btn`);
+    const btn = document.querySelector('#panelFooter .btn');
+    const original = btn.textContent;
     btn.textContent = '✅ Copiado';
-    setTimeout(() => { btn.textContent = '📋 Copiar'; }, 2000);
+    setTimeout(() => { btn.textContent = original; }, 2000);
   });
 }
 
-function descargarCarta(idx, nombre) {
-  const box = document.getElementById(`carta-text-${idx}`);
+function descargarCarta(nombre) {
+  const box = document.getElementById('panelCarta');
   if (!box) return;
   const blob = new Blob([box.textContent], { type: 'text/plain;charset=utf-8' });
   const url = URL.createObjectURL(blob);
@@ -430,10 +554,10 @@ async function api(url) {
   return res.json();
 }
 
+// La carpeta en disco es YYYY-MM-DD (ordena bien); aquí se muestra DD-MM-YYYY
 function formatDate(dateStr) {
   const [y, m, d] = dateStr.split('-');
-  const meses = ['', 'ene', 'feb', 'mar', 'abr', 'may', 'jun', 'jul', 'ago', 'sep', 'oct', 'nov', 'dic'];
-  return `${parseInt(d)} ${meses[parseInt(m)]} ${y}`;
+  return `${d}-${m}-${y}`;
 }
 
 function escapeHtml(str) {

@@ -143,6 +143,52 @@ app.post('/api/carta/generar', async (req, res) => {
   req.on('close', () => stream.data.destroy());
 });
 
+// ── CRM de candidaturas ──────────────────────────────────────────────────────
+// Estados por slug en data/applications_status.json: { "slug": "aplicado" | "descartado" }
+// "pendiente" es el estado por defecto y no se persiste.
+
+const DATA_DIR = path.join(__dirname, '../data');
+const ESTADOS_PATH = path.join(DATA_DIR, 'applications_status.json');
+const ESTADOS_VALIDOS = ['pendiente', 'aplicado', 'descartado'];
+
+function leerEstados() {
+  try {
+    return JSON.parse(fs.readFileSync(ESTADOS_PATH, 'utf-8'));
+  } catch {
+    return {};
+  }
+}
+
+// Mapa completo de estados guardados
+app.get('/api/estados', (req, res) => {
+  res.json(leerEstados());
+});
+
+// Cambia el estado de una oferta
+app.post('/api/estados/:slug', (req, res) => {
+  if (!SLUG_OK(req.params.slug)) return res.status(400).json({ error: 'Slug inválido' });
+
+  const { estado } = req.body || {};
+  if (!ESTADOS_VALIDOS.includes(estado)) {
+    return res.status(400).json({ error: `Estado inválido. Usa: ${ESTADOS_VALIDOS.join(', ')}` });
+  }
+
+  const estados = leerEstados();
+  if (estado === 'pendiente') {
+    delete estados[req.params.slug];
+  } else {
+    estados[req.params.slug] = estado;
+  }
+
+  try {
+    if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
+    fs.writeFileSync(ESTADOS_PATH, JSON.stringify(estados, null, 2), 'utf-8');
+    res.json({ ok: true, slug: req.params.slug, estado });
+  } catch {
+    res.status(500).json({ error: 'Error guardando estado' });
+  }
+});
+
 // Estado de Ollama
 app.get('/api/status', async (req, res) => {
   const axios = require('axios');
