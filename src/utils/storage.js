@@ -1,23 +1,13 @@
-const fs = require('fs');
-const path = require('path');
+const store = require('./store');
 
-const SEEN_JOBS_PATH = path.join(__dirname, '../../data/seen_jobs.json');
+const SEEN_JOBS_KEY = 'data/seen_jobs.json';
 
-function cargarVistas() {
-  if (!fs.existsSync(SEEN_JOBS_PATH)) {
-    return [];
-  }
-  try {
-    const contenido = fs.readFileSync(SEEN_JOBS_PATH, 'utf-8');
-    return JSON.parse(contenido);
-  } catch {
-    return [];
-  }
+async function cargarVistas() {
+  return (await store.leerJSON(SEEN_JOBS_KEY, [])) || [];
 }
 
-function guardarVistas(ids) {
-  fs.mkdirSync(path.dirname(SEEN_JOBS_PATH), { recursive: true });
-  fs.writeFileSync(SEEN_JOBS_PATH, JSON.stringify(ids, null, 2), 'utf-8');
+async function guardarVistas(ids) {
+  await store.escribirJSON(SEEN_JOBS_KEY, ids);
 }
 
 function esNueva(url, vistas) {

@@ -3,3 +3,8 @@ node_modules/
 data/seen_jobs.json
 output/
 contextoautomatico.md
+.vercel
+.vercel
+data/applications_status.json
+.env*.local
+.env.local

@@ -1,6 +1,5 @@
-const fs = require('fs');
-const path = require('path');
 const crypto = require('crypto');
+const store = require('./store');
 
 function slug(texto) {
   return texto
@@ -19,19 +18,10 @@ function slugOferta(oferta) {
 
 // Fecha local YYYY-MM-DD (toISOString usaría UTC: de madrugada caería en el día anterior)
 function fechaHoy() {
-  return new Date().toLocaleDateString('sv-SE');
+  return new Date().toLocaleDateString('sv-SE', { timeZone: process.env.TZ_LOCAL || 'Europe/Madrid' });
 }
 
-function carpetaHoy() {
-  const carpeta = path.join(__dirname, '../../output', fechaHoy());
-  if (!fs.existsSync(carpeta)) {
-    fs.mkdirSync(carpeta, { recursive: true });
-  }
-  return carpeta;
-}
-
-function generarResumen(ofertas) {
-  const carpeta = carpetaHoy();
+async function generarResumen(ofertas) {
   const hoy = fechaHoy();
 
   let md = `# Resumen de ofertas — ${hoy}\n\nTotal: **${ofertas.length}**\n\n---\n\n`;
@@ -45,9 +35,6 @@ function generarResumen(ofertas) {
     if (oferta.descripcion) md += `**Descripción:** ${oferta.descripcion.slice(0, 200)}  \n`;
     md += '\n---\n\n';
   }
-
-  const rutaResumen = path.join(carpeta, 'resumen.md');
-  fs.writeFileSync(rutaResumen, md, 'utf-8');
 
   const json = {
     fecha: hoy,
@@ -64,9 +51,11 @@ function generarResumen(ofertas) {
       modalidad: o.modalidad || '',
     })),
   };
-  fs.writeFileSync(path.join(carpeta, 'resumen.json'), JSON.stringify(json, null, 2), 'utf-8');
 
-  return rutaResumen;
+  await store.escribirTexto(`output/${hoy}/resumen.md`, md);
+  await store.escribirJSON(`output/${hoy}/resumen.json`, json);
+
+  return { fecha: hoy, md, ruta: `output/${hoy}/resumen.md` };
 }
 
 module.exports = { generarResumen };

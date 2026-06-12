@@ -2,70 +2,73 @@ require('dotenv').config();
 
 const express = require('express');
 const path = require('path');
-const fs = require('fs');
-const { spawn } = require('child_process');
+const store = require('./utils/store');
+const llm = require('./ai/llm');
+const { runBusqueda } = require('./run');
+const { promptCarta } = require('./ai/prompts');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
-const OUTPUT_DIR = path.join(__dirname, '../output');
 
 app.use(express.static(path.join(__dirname, '../public')));
 app.use(express.json());
 
-// Solo acepta fechas YYYY-MM-DD y slugs alfanuméricos — evita rutas fuera de output/
+// Solo acepta fechas YYYY-MM-DD y slugs alfanuméricos — evita claves arbitrarias
 const FECHA_OK = (d) => /^\d{4}-\d{2}-\d{2}$/.test(d);
 const SLUG_OK = (s) => /^[\w-]+$/.test(s);
 
 // Lista de runs guardados con su total de ofertas: [{ date, total }]
-app.get('/api/runs', (req, res) => {
-  if (!fs.existsSync(OUTPUT_DIR)) return res.json([]);
+app.get('/api/runs', async (req, res) => {
+  try {
+    const claves = await store.listar('output/');
+    const fechas = [...new Set(
+      claves
+        .filter((c) => c.endsWith('/resumen.json'))
+        .map((c) => c.split('/')[1])
+        .filter(FECHA_OK)
+    )].sort().reverse();
 
-  const runs = fs.readdirSync(OUTPUT_DIR)
-    .filter(FECHA_OK)
-    .sort()
-    .reverse()
-    .map((date) => {
-      try {
-        const data = JSON.parse(fs.readFileSync(path.join(OUTPUT_DIR, date, 'resumen.json'), 'utf-8'));
-        return { date, total: data.total };
-      } catch {
-        return null;
-      }
-    })
-    .filter(Boolean);
+    const runs = await Promise.all(fechas.map(async (date) => {
+      const data = await store.leerJSON(`output/${date}/resumen.json`);
+      return data ? { date, total: data.total } : null;
+    }));
 
-  res.json(runs);
+    res.json(runs.filter(Boolean));
+  } catch (err) {
+    console.error(`[Server] /api/runs: ${err.message}`);
+    res.status(500).json({ error: 'Error listando runs' });
+  }
 });
 
 // Datos de un run concreto + slugs que ya tienen carta guardada
-app.get('/api/runs/:date', (req, res) => {
+app.get('/api/runs/:date', async (req, res) => {
   if (!FECHA_OK(req.params.date)) return res.status(400).json({ error: 'Fecha inválida' });
 
-  const carpeta = path.join(OUTPUT_DIR, req.params.date);
-  const jsonPath = path.join(carpeta, 'resumen.json');
-  if (!fs.existsSync(jsonPath)) return res.status(404).json({ error: 'No encontrado' });
-
   try {
-    const data = JSON.parse(fs.readFileSync(jsonPath, 'utf-8'));
-    const cartas = fs.readdirSync(carpeta)
-      .filter((f) => f.endsWith('_carta.md'))
-      .map((f) => f.slice(0, -'_carta.md'.length));
+    const data = await store.leerJSON(`output/${req.params.date}/resumen.json`);
+    if (!data) return res.status(404).json({ error: 'No encontrado' });
+
+    const claves = await store.listar(`output/${req.params.date}/`);
+    const cartas = claves
+      .filter((c) => c.endsWith('_carta.md'))
+      .map((c) => c.split('/').pop().slice(0, -'_carta.md'.length));
+
     res.json({ ...data, cartas });
-  } catch {
+  } catch (err) {
+    console.error(`[Server] /api/runs/:date: ${err.message}`);
     res.status(500).json({ error: 'Error leyendo datos' });
   }
 });
 
 // Carta de presentación guardada de una oferta
-app.get('/api/runs/:date/carta/:slug', (req, res) => {
+app.get('/api/runs/:date/carta/:slug', async (req, res) => {
   if (!FECHA_OK(req.params.date) || !SLUG_OK(req.params.slug)) {
     return res.status(400).json({ error: 'Parámetros inválidos' });
   }
 
-  const cartaPath = path.join(OUTPUT_DIR, req.params.date, `${req.params.slug}_carta.md`);
-  if (!fs.existsSync(cartaPath)) return res.status(404).json({ error: 'Carta no encontrada' });
+  const contenido = await store.leerTexto(`output/${req.params.date}/${req.params.slug}_carta.md`);
+  if (contenido == null) return res.status(404).json({ error: 'Carta no encontrada' });
 
-  const contenido = fs.readFileSync(cartaPath, 'utf-8');
   // Extrae solo el cuerpo (después del ---)
   const partes = contenido.split('---\n\n');
   const carta = partes.length > 1 ? partes.slice(1).join('---\n\n').trim() : contenido;
@@ -77,95 +80,56 @@ app.post('/api/carta/generar', async (req, res) => {
   const { titulo, empresa, descripcion, url, date, slug } = req.body;
   if (!titulo || !empresa) return res.status(400).json({ error: 'Faltan datos de la oferta' });
 
-  const axios = require('axios');
-  const { promptCarta } = require('./ai/prompts');
-  const ollamaUrl = `${process.env.OLLAMA_BASE_URL || 'http://localhost:11434'}/api/generate`;
-  const modelo = process.env.OLLAMA_MODEL || 'llama3';
-
   res.setHeader('Content-Type', 'text/event-stream');
   res.setHeader('Cache-Control', 'no-cache');
   res.setHeader('Connection', 'keep-alive');
 
   const send = (data) => res.write(`data: ${JSON.stringify(data)}\n\n`);
 
-  let stream;
+  // Si el cliente cierra (botón Detener), aborta la generación
+  const controller = new AbortController();
+  req.on('close', () => controller.abort());
+
   try {
-    stream = await axios.post(ollamaUrl, {
-      model: modelo,
-      prompt: promptCarta({ titulo, empresa, descripcion: descripcion || '', url: url || '' }),
-      stream: true,
-    }, { responseType: 'stream', timeout: 300000 });
+    const carta = await llm.generarStream(
+      promptCarta({ titulo, empresa, descripcion: descripcion || '', url: url || '' }),
+      (token) => send({ token }),
+      controller.signal
+    );
+
+    // Guarda la carta para reutilizarla en visitas posteriores
+    if (date && slug && FECHA_OK(date) && SLUG_OK(slug)) {
+      await store.escribirTexto(
+        `output/${date}/${slug}_carta.md`,
+        `# Carta para ${empresa}\n\n_${titulo}_\n\n---\n\n${carta}\n`
+      );
+    }
+
+    send({ done: true });
   } catch (err) {
-    send({ error: 'Ollama no responde. ¿Está activo?' });
-    return res.end();
+    if (err.name !== 'AbortError' && err.code !== 'ERR_CANCELED') {
+      console.error(`[Server] /api/carta/generar: ${err.message}`);
+      send({ error: 'El LLM no responde. Revisa la configuración (Ollama local o GROQ_API_KEY).' });
+    }
   }
 
-  let cartaCompleta = '';
-  let buffer = '';
-
-  stream.data.on('data', (chunk) => {
-    buffer += chunk.toString();
-    const lineas = buffer.split('\n');
-    buffer = lineas.pop(); // guarda línea incompleta
-
-    for (const linea of lineas) {
-      if (!linea.trim()) continue;
-      try {
-        const json = JSON.parse(linea);
-        if (json.response) {
-          cartaCompleta += json.response;
-          send({ token: json.response });
-        }
-        if (json.done) {
-          // Guarda la carta en disco
-          if (date && slug && FECHA_OK(date) && SLUG_OK(slug)) {
-            const carpeta = path.join(OUTPUT_DIR, date);
-            if (fs.existsSync(carpeta)) {
-              fs.writeFileSync(
-                path.join(carpeta, `${slug}_carta.md`),
-                `# Carta para ${empresa}\n\n_${titulo}_\n\n---\n\n${cartaCompleta}\n`,
-                'utf-8'
-              );
-            }
-          }
-          send({ done: true });
-          res.end();
-        }
-      } catch { /* línea JSON incompleta, ignorar */ }
-    }
-  });
-
-  stream.data.on('error', () => {
-    send({ error: 'Error de conexión con Ollama' });
-    res.end();
-  });
-
-  req.on('close', () => stream.data.destroy());
+  res.end();
 });
 
 // ── CRM de candidaturas ──────────────────────────────────────────────────────
 // Estados por slug en data/applications_status.json: { "slug": "aplicado" | "descartado" }
 // "pendiente" es el estado por defecto y no se persiste.
 
-const DATA_DIR = path.join(__dirname, '../data');
-const ESTADOS_PATH = path.join(DATA_DIR, 'applications_status.json');
+const ESTADOS_KEY = 'data/applications_status.json';
 const ESTADOS_VALIDOS = ['pendiente', 'aplicado', 'descartado'];
 
-function leerEstados() {
-  try {
-    return JSON.parse(fs.readFileSync(ESTADOS_PATH, 'utf-8'));
-  } catch {
-    return {};
-  }
-}
-
 // Mapa completo de estados guardados
-app.get('/api/estados', (req, res) => {
-  res.json(leerEstados());
+app.get('/api/estados', async (req, res) => {
+  res.json((await store.leerJSON(ESTADOS_KEY, {})) || {});
 });
 
 // Cambia el estado de una oferta
-app.post('/api/estados/:slug', (req, res) => {
+app.post('/api/estados/:slug', async (req, res) => {
   if (!SLUG_OK(req.params.slug)) return res.status(400).json({ error: 'Slug inválido' });
 
   const { estado } = req.body || {};
@@ -173,70 +137,52 @@ app.post('/api/estados/:slug', (req, res) => {
     return res.status(400).json({ error: `Estado inválido. Usa: ${ESTADOS_VALIDOS.join(', ')}` });
   }
 
-  const estados = leerEstados();
-  if (estado === 'pendiente') {
-    delete estados[req.params.slug];
-  } else {
-    estados[req.params.slug] = estado;
-  }
-
   try {
-    if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
-    fs.writeFileSync(ESTADOS_PATH, JSON.stringify(estados, null, 2), 'utf-8');
+    const estados = (await store.leerJSON(ESTADOS_KEY, {})) || {};
+    if (estado === 'pendiente') {
+      delete estados[req.params.slug];
+    } else {
+      estados[req.params.slug] = estado;
+    }
+    await store.escribirJSON(ESTADOS_KEY, estados);
     res.json({ ok: true, slug: req.params.slug, estado });
-  } catch {
+  } catch (err) {
+    console.error(`[Server] /api/estados: ${err.message}`);
     res.status(500).json({ error: 'Error guardando estado' });
   }
 });
 
-// Estado de Ollama
+// Estado del LLM (Ollama en local, Groq en producción)
 app.get('/api/status', async (req, res) => {
-  const axios = require('axios');
-  const ollamaUrl = process.env.OLLAMA_BASE_URL || 'http://localhost:11434';
-  const modelo = process.env.OLLAMA_MODEL || 'llama3';
-  try {
-    await axios.get(ollamaUrl, { timeout: 2000 });
-    res.json({ ollama: true, modelo });
-  } catch {
-    res.json({ ollama: false, modelo });
-  }
+  const { ok, proveedor, modelo } = await llm.estado();
+  // "ollama" se mantiene por compatibilidad con el frontend: significa "LLM disponible"
+  res.json({ ollama: ok, proveedor, modelo });
 });
 
 // Lanza una nueva búsqueda con SSE para logs en tiempo real
-app.get('/api/run/start', (req, res) => {
+app.get('/api/run/start', async (req, res) => {
   res.setHeader('Content-Type', 'text/event-stream');
   res.setHeader('Cache-Control', 'no-cache');
   res.setHeader('Connection', 'keep-alive');
 
   const send = (data) => res.write(`data: ${JSON.stringify(data)}\n\n`);
 
-  send({ type: 'log', msg: 'Iniciando búsqueda...' });
+  try {
+    await runBusqueda((msg) => send({ type: 'log', msg }));
+    send({ type: 'done', code: 0 });
+  } catch (err) {
+    send({ type: 'error', msg: err.message });
+    send({ type: 'done', code: 1 });
+  }
 
-  const proc = spawn('node', ['src/index.js'], {
-    cwd: path.join(__dirname, '..'),
-    env: { ...process.env },
-  });
-
-  proc.stdout.on('data', (data) => {
-    data.toString().trim().split('\n').forEach((line) => {
-      if (line) send({ type: 'log', msg: line });
-    });
-  });
-
-  proc.stderr.on('data', (data) => {
-    data.toString().trim().split('\n').forEach((line) => {
-      if (line) send({ type: 'error', msg: line });
-    });
-  });
-
-  proc.on('close', (code) => {
-    send({ type: 'done', code });
-    res.end();
-  });
-
-  req.on('close', () => proc.kill());
+  res.end();
 });
 
-app.listen(PORT, () => {
-  console.log(`Dashboard en http://localhost:${PORT}`);
-});
+// En local arranca el servidor; en Vercel la app se exporta como función serverless
+if (require.main === module) {
+  app.listen(PORT, () => {
+    console.log(`Dashboard en http://localhost:${PORT}`);
+  });
+}
+
+module.exports = app;

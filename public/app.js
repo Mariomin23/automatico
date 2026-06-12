@@ -30,12 +30,15 @@ async function checkStatus() {
     const data = await api('/api/status');
     const dot = document.getElementById('statusDot');
     const label = document.getElementById('statusLabel');
+    const nombre = data.proveedor === 'groq' ? 'Groq' : 'Ollama';
     if (data.ollama) {
       dot.className = 'status-dot online';
-      label.textContent = `Ollama OK · ${data.modelo}`;
+      label.textContent = `${nombre} OK · ${data.modelo}`;
     } else {
       dot.className = 'status-dot offline';
-      label.textContent = 'Ollama offline — ejecuta: ollama serve';
+      label.textContent = data.proveedor === 'groq'
+        ? 'Groq offline — revisa GROQ_API_KEY'
+        : 'Ollama offline — ejecuta: ollama serve';
     }
   } catch {
     document.getElementById('statusLabel').textContent = 'Error conectando';

@@ -1,4 +1,4 @@
-const axios = require('axios');
+const llm = require('./llm');
 const { promptCarta } = require('./prompts');
 
 function sleep(ms) {
@@ -12,14 +12,9 @@ function log(msg) {
 
 async function generarCarta(oferta) {
   try {
-    const response = await axios.post(`${process.env.OLLAMA_BASE_URL || 'http://localhost:11434'}/api/generate`, {
-      model: process.env.OLLAMA_MODEL || 'llama3.2',
-      prompt: promptCarta(oferta),
-      stream: false,
-    });
-    return response.data.response;
+    return await llm.generar(promptCarta(oferta));
   } catch (err) {
-    console.error(`[LetterWriter] Error Ollama para "${oferta.empresa}": ${err.message}`);
+    console.error(`[LetterWriter] Error LLM para "${oferta.empresa}": ${err.message}`);
     return null;
   }
 }

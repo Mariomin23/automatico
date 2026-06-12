@@ -3,7 +3,8 @@ const infojobs = require('./infojobs');
 const { esNueva } = require('../utils/storage');
 const profile = require('../config/profile');
 
-function log(msg) {
+// Log por defecto si no llega uno desde fuera (run.js pasa el suyo para SSE)
+function logConsola(msg) {
   const hora = new Date().toTimeString().slice(0, 5);
   console.log(`[${hora}] ${msg}`);
 }
@@ -13,7 +14,7 @@ function tituloExcluido(titulo, excluir) {
   return excluir.some((ex) => new RegExp(`\\b${ex}\\b`, 'i').test(titulo));
 }
 
-async function scrapearFuente(nombre, scraper, keywords) {
+async function scrapearFuente(nombre, scraper, keywords, log) {
   log(`Scraping ${nombre}...`);
   try {
     const ofertas = await scraper.obtenerOfertas(keywords);
@@ -28,12 +29,12 @@ async function scrapearFuente(nombre, scraper, keywords) {
 // Devuelve { ofertas, urlsEncontradas }:
 // - ofertas: las que van al resumen (nuevas primero, ya filtradas y con tope)
 // - urlsEncontradas: TODAS las scrapeadas, para marcarlas como vistas
-async function obtenerOfertas(vistas) {
+async function obtenerOfertas(vistas, log = logConsola) {
   const keywords = profile.busqueda.keywords;
   const maxOfertas = parseInt(process.env.MAX_OFFERS_PER_RUN || '20', 10);
 
-  const ofertasTecno = await scrapearFuente('Tecnoempleo', tecnoempleo, keywords);
-  const ofertasInfo = await scrapearFuente('InfoJobs', infojobs, keywords);
+  const ofertasTecno = await scrapearFuente('Tecnoempleo', tecnoempleo, keywords, log);
+  const ofertasInfo = await scrapearFuente('InfoJobs', infojobs, keywords, log);
 
   // Combina y deduplica por URL
   const mapa = new Map();

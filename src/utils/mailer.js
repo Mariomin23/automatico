@@ -1,12 +1,12 @@
 const nodemailer = require('nodemailer');
-const fs = require('fs');
 
 function log(msg) {
   const hora = new Date().toTimeString().slice(0, 5);
   console.log(`[${hora}] ${msg}`);
 }
 
-async function enviarResumen(rutaResumen) {
+// Recibe el contenido del resumen directamente (en producción no hay disco local)
+async function enviarResumen(cuerpo, fecha) {
   const { EMAIL_FROM, EMAIL_TO, EMAIL_SMTP_HOST, EMAIL_SMTP_PORT, EMAIL_SMTP_USER, EMAIL_SMTP_PASS } =
     process.env;
 
@@ -23,14 +23,11 @@ async function enviarResumen(rutaResumen) {
     auth: { user: EMAIL_SMTP_USER, pass: EMAIL_SMTP_PASS },
   });
 
-  const cuerpo = fs.readFileSync(rutaResumen, 'utf-8');
-  const hoy = new Date().toISOString().slice(0, 10);
-
   try {
     await transporter.sendMail({
       from: EMAIL_FROM || EMAIL_SMTP_USER,
       to: EMAIL_TO || EMAIL_SMTP_USER,
-      subject: `job-hunter-ai — Resumen ${hoy}`,
+      subject: `job-hunter-ai — Resumen ${fecha}`,
       text: cuerpo,
     });
     log(`Email enviado a ${EMAIL_TO}`);
