@@ -2,6 +2,19 @@
 
 > Automatiza tu búsqueda de empleo: scraping de portales, dashboard con CRM de candidaturas y cartas de presentación generadas con IA.
 
+**🌐 Demo en vivo: [automatico-five.vercel.app](https://automatico-five.vercel.app)**
+
+<p align="center">
+  <img src="docs/screenshot.png" width="720" alt="Job Hunter AI — dashboard con historial, CRM de candidaturas y generación de cartas">
+</p>
+
+[![Node.js](https://img.shields.io/badge/Node.js-339933?logo=nodedotjs&logoColor=white)](https://nodejs.org/)
+[![Express](https://img.shields.io/badge/Express-000000?logo=express&logoColor=white)](https://expressjs.com/)
+[![Cheerio](https://img.shields.io/badge/Cheerio-E88C1F?logo=cheerio&logoColor=white)](https://cheerio.js.org/)
+[![Ollama](https://img.shields.io/badge/Ollama-000000?logo=ollama&logoColor=white)](https://ollama.com/)
+[![Groq](https://img.shields.io/badge/Groq_·_Llama_3-F55036?logoColor=white)](https://groq.com/)
+[![Vercel](https://img.shields.io/badge/Vercel-000000?logo=vercel&logoColor=white)](https://vercel.com/)
+
 **job-hunter-ai** rastrea ofertas de trabajo en **Tecnoempleo** e **InfoJobs**, las filtra según tu perfil (keywords, ciudad, palabras excluidas), detecta cuáles son nuevas respecto a ejecuciones anteriores y las presenta en un dashboard web donde puedes hacer seguimiento de cada candidatura y generar una carta de presentación personalizada por oferta con un LLM.
 
 Funciona en dos entornos con el mismo código:
@@ -125,6 +138,10 @@ vercel deploy --prod
 ## 🛠️ Stack
 
 Node.js (CommonJS) · Express · axios + cheerio · Ollama / Groq (Llama 3) · Vercel Blob · nodemailer · vanilla JS en el front
+
+## 📄 Licencia
+
+[MIT](LICENSE)
 
 ---
 
