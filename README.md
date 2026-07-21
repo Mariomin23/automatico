@@ -1,148 +1,222 @@
-# 🎯 job-hunter-ai
+# job-hunter-ai
 
-> Automatiza tu búsqueda de empleo: scraping de portales, dashboard con CRM de candidaturas y cartas de presentación generadas con IA.
-
-**🌐 Demo en vivo: [automatico-five.vercel.app](https://automatico-five.vercel.app)**
+> Automatiza la búsqueda de empleo: scraping multi-portal, dashboard con CRM de candidaturas y cartas de presentación generadas con IA en tiempo real.
 
 <p align="center">
-  <img src="docs/screenshot.png" width="720" alt="Job Hunter AI — dashboard con historial, CRM de candidaturas y generación de cartas">
+  <a href="https://automatico-five.vercel.app"><strong>🌐 Demo en vivo → automatico-five.vercel.app</strong></a>
 </p>
 
-[![Node.js](https://img.shields.io/badge/Node.js-339933?logo=nodedotjs&logoColor=white)](https://nodejs.org/)
-[![Express](https://img.shields.io/badge/Express-000000?logo=express&logoColor=white)](https://expressjs.com/)
-[![Cheerio](https://img.shields.io/badge/Cheerio-E88C1F?logo=cheerio&logoColor=white)](https://cheerio.js.org/)
-[![Ollama](https://img.shields.io/badge/Ollama-000000?logo=ollama&logoColor=white)](https://ollama.com/)
-[![Groq](https://img.shields.io/badge/Groq_·_Llama_3-F55036?logoColor=white)](https://groq.com/)
-[![Vercel](https://img.shields.io/badge/Vercel-000000?logo=vercel&logoColor=white)](https://vercel.com/)
+<p align="center">
+  <img src="docs/screenshot.png" width="780" alt="Dashboard — historial de búsquedas, CRM de candidaturas y generación de cartas con streaming">
+</p>
 
-**job-hunter-ai** rastrea ofertas de trabajo en **Tecnoempleo** e **InfoJobs**, las filtra según tu perfil (keywords, ciudad, palabras excluidas), detecta cuáles son nuevas respecto a ejecuciones anteriores y las presenta en un dashboard web donde puedes hacer seguimiento de cada candidatura y generar una carta de presentación personalizada por oferta con un LLM.
+<p align="center">
+  <img src="https://img.shields.io/badge/Node.js-339933?logo=nodedotjs&logoColor=white" alt="Node.js">
+  <img src="https://img.shields.io/badge/Express_5-000000?logo=express&logoColor=white" alt="Express">
+  <img src="https://img.shields.io/badge/Cheerio-E88C1F?logoColor=white" alt="Cheerio">
+  <img src="https://img.shields.io/badge/Ollama_%2F_Groq-000000?logoColor=white" alt="LLM">
+  <img src="https://img.shields.io/badge/Vercel_Blob-000000?logo=vercel&logoColor=white" alt="Vercel Blob">
+  <img src="https://img.shields.io/badge/Vanilla_JS-F7DF1E?logo=javascript&logoColor=black" alt="Vanilla JS">
+  <img src="https://img.shields.io/badge/MIT-green" alt="MIT">
+</p>
 
-Funciona en dos entornos con el mismo código:
+---
 
-- **Local** — CLI + dashboard Express, con IA gratuita vía [Ollama](https://ollama.com)
-- **Producción** — desplegado en Vercel como función serverless, con persistencia en Vercel Blob
+## Por qué lo construí
 
-## ✨ Características
+Buscando trabajo como desarrollador noté que pasaba más tiempo filtrando portales que preparando candidaturas. Lo automaticé: un script que raspa Tecnoempleo e InfoJobs, filtra por mi stack exacto, detecta solo las ofertas nuevas y me da un dashboard donde gestionar el estado de cada aplicación y generar una carta personalizada con IA, directamente en el navegador.
 
-- 🔍 **Scraping multi-portal**: Tecnoempleo (HTML con cheerio) e InfoJobs (API oficial OAuth / JSON embebido), con deduplicación por URL y pausas entre peticiones para no saturar los portales
-- 🆕 **Detección de ofertas nuevas**: compara contra `data/seen_jobs.json`; las nuevas siempre aparecen primero y nunca quedan fuera por el tope de ofertas por ejecución
-- 🧠 **Filtrado inteligente**: por palabra completa (`java` no descarta `javascript`), ciudad o trabajo 100% remoto, y orden por experiencia requerida (sin experiencia → junior → mid → senior)
-- 📋 **CRM de candidaturas**: marca cada oferta como pendiente, aplicada, entrevista, descartada… con filtros en tiempo real en el dashboard
-- ✉️ **Cartas de presentación con IA**: generadas bajo demanda por oferta, con streaming token a token (SSE) y persistencia en disco — si ya existe, se muestra al instante
-- 🤖 **Doble proveedor de LLM con la misma interfaz**: Ollama en local (gratis, sin API key) y Groq en producción
-- 📊 **Dashboard web**: historial de ejecuciones por fecha, botón "Nueva búsqueda" con logs en directo, SPA en vanilla JS sin build step
-- 🔐 **Listo para exponer en público**: token de administración para las acciones de escritura, protección anti fuerza bruta y validación estricta de entradas
-- 📧 **Resumen por email** (opcional, con nodemailer)
+El reto técnico interesante fue hacer que el mismo código funcionase en local (Ollama, `fs`) y en producción serverless (Groq, Vercel Blob) sin duplicar lógica.
 
-## 🏗️ Cómo funciona
+---
+
+## Qué hace
+
+- **Scraping multi-portal**: Tecnoempleo (HTML + Cheerio) e InfoJobs (API oficial OAuth 2.0 / JSON embebido como fallback), con pausas entre peticiones y deduplicación por URL.
+- **Detección de novedades**: compara contra `seen_jobs.json`; las nuevas siempre aparecen primero y nunca quedan fuera por el tope de resultados.
+- **Filtrado inteligente**: por palabra completa (`java` no descarta `javascript`), ciudad, modalidad y nivel de experiencia — ordena de menor a mayor seniority.
+- **Dashboard web**: historial de ejecuciones por fecha, búsqueda con logs en directo vía SSE, CRM con filtros en tiempo real. SPA vanilla JS, sin framework, sin build step.
+- **Cartas con IA en streaming**: tokens en tiempo real (SSE). Si ya existe, se sirve al instante desde caché.
+- **Doble proveedor de LLM**: Ollama en local (gratis, sin API key) y Groq en producción, intercambiables sin cambiar el código de negocio.
+- **Resumen por email** (opcional, nodemailer/SMTP).
+
+---
+
+## Arquitectura
 
 ```
-┌─────────────┐     ┌──────────────┐     ┌─────────────────────┐
-│  Scrapers    │ ──▶ │  Filtrado +  │ ──▶ │  output/YYYY-MM-DD/  │
-│  Tecnoempleo │     │  detección   │     │  resumen.md / .json  │
-│  InfoJobs    │     │  de nuevas   │     │  (o Vercel Blob)     │
-└─────────────┘     └──────────────┘     └──────────┬──────────┘
-                                                     │
-                          ┌──────────────────────────▼──────────┐
-                          │   Dashboard Express (puerto 3000)    │
-                          │   historial · CRM · cartas con IA    │
-                          └──────────────┬───────────────────────┘
-                                         │ bajo demanda
-                                  ┌──────▼───────┐
-                                  │ Ollama (local)│
-                                  │ Groq (cloud)  │
-                                  └──────────────┘
+┌──────────────────────────────────────────────────────┐
+│  Scrapers                                            │
+│  tecnoempleo.js  →  Cheerio (HTML)                   │
+│  infojobsApi.js  →  OAuth 2.0 / JSON embebido        │
+└──────────────────────┬───────────────────────────────┘
+                       │ ofertas crudas
+┌──────────────────────▼───────────────────────────────┐
+│  Pipeline de filtrado                                │
+│  · palabra completa  · ciudad  · duplicados          │
+│  · detección de nuevas (seen_jobs.json)              │
+│  · orden por seniority                               │
+└──────────────────────┬───────────────────────────────┘
+                       │ resumen.json + resumen.md
+         ┌─────────────▼──────────────────┐
+         │  Storage adapter               │
+         │  local → fs   |  prod → Blob   │
+         └─────────────┬──────────────────┘
+                       │
+┌──────────────────────▼───────────────────────────────┐
+│  Express / Vercel Serverless Function                │
+│  REST API  +  SSE (búsqueda en directo, streaming)   │
+│  Auth: timing-safe token  +  rate-limit por IP       │
+└──────────────────────┬───────────────────────────────┘
+                       │ bajo demanda
+              ┌────────▼────────┐
+              │   LLM adapter   │
+              │ Ollama (local)  │
+              │ Groq   (cloud)  │
+              └─────────────────┘
 ```
 
-La IA **no puntúa ofertas en bloque**: las cartas se generan solo cuando las pides desde el dashboard, así el flujo de scraping es rápido y no depende de ningún LLM.
+---
 
-## 🚀 Empezar
+## Decisiones técnicas relevantes
 
-### Requisitos
+### Adaptador de LLM: mismo contrato, dos proveedores
 
-- Node.js 18+
-- [Ollama](https://ollama.com) con un modelo instalado (`ollama pull llama3`) — solo si quieres generar cartas en local
+`src/ai/llm.js` expone `generar()` y `generarStream()`. Internamente detecta el entorno: si existe `GROQ_API_KEY` parsea el stream SSE estilo OpenAI (`data: {...}` / `data: [DONE]`); si no, parsea el NDJSON de Ollama (`{ response, done }`). Ambos corren modelos Llama, así el mismo prompt funciona igual en los dos entornos. El servidor nunca sabe qué proveedor hay debajo.
 
-### Instalación
+### Streaming real con AbortController
+
+Las cartas se generan con SSE: el cliente ve tokens en tiempo real. Si el usuario cierra la conexión (botón "Detener"), `req.on('close')` aborta la petición HTTP al LLM antes de que termine, liberando recursos sin esperar:
+
+```js
+const controller = new AbortController();
+req.on('close', () => controller.abort());
+await llm.generarStream(prompt, (token) => send({ token }), controller.signal);
+```
+
+### Comparación de tokens en tiempo constante
+
+Para evitar que un atacante mida tiempos de respuesta y deduzca caracteres del token de administración:
+
+```js
+function tokenCorrecto(enviado, token) {
+  const a = Buffer.from(String(enviado || ''));
+  const b = Buffer.from(token);
+  return a.length === b.length && crypto.timingSafeEqual(a, b);
+}
+```
+
+### Anti-fuerza-bruta por IP en memoria
+
+Tras 5 intentos fallidos en 15 minutos la IP recibe 429. El contador se limpia en el primer acierto. El mapa tiene tope de 1000 IPs para evitar OOM en serverless.
+
+### Capa de persistencia intercambiable
+
+`src/utils/store.js` abstrae `fs` (local) y `@vercel/blob` (producción) con la misma API: `leerJSON`, `escribirJSON`, `leerTexto`, `escribirTexto`, `listar`. El servidor no sabe en qué entorno corre.
+
+### Filtrado de palabras completas
+
+`java` aparece en `javascript`, `javaspring`, `javafx`… El filtro usa `\b` para excluir solo si es palabra completa:
+
+```js
+const regex = new RegExp(`\\b${keyword}\\b`, 'i');
+```
+
+---
+
+## Stack
+
+| Capa | Tecnología |
+|---|---|
+| Runtime | Node.js 18+ (CommonJS) |
+| Framework | Express 5 |
+| Scraping | axios + Cheerio |
+| IA | Ollama (local) / Groq API (cloud) — Llama 3 |
+| Persistencia | fs (local) / Vercel Blob (prod) |
+| Frontend | Vanilla JS + CSS — sin framework, sin build step |
+| Deploy | Vercel (función serverless única) |
+| Tests | Playwright (smoke test + screenshot) |
+
+---
+
+## Empezar en local
+
+**Requisitos**: Node.js 18+ y [Ollama](https://ollama.com) con un modelo instalado (`ollama pull llama3`) si quieres generar cartas en local.
 
 ```bash
-git clone <repo-url>
+git clone https://github.com/Mariomin23/automatico.git
 cd automatico
 npm install
 cp .env.example .env   # rellena tus credenciales
 ```
 
-### Uso
-
 ```bash
-npm start          # scraping CLI — genera el resumen del día, sin IA
-npm run serve      # dashboard web en http://localhost:3000
-npm run dev        # scraping con nodemon (desarrollo)
-npm run serve:dev  # dashboard con nodemon (desarrollo)
+npm start          # scraping CLI — genera el resumen del día
+npm run serve      # dashboard en http://localhost:3000
+npm run dev        # scraping con hot-reload
+npm run serve:dev  # dashboard con hot-reload
 ```
 
-Cada ejecución genera `output/YYYY-MM-DD/` con:
+Cada ejecución crea `output/YYYY-MM-DD/`:
 
 | Archivo | Contenido |
 |---|---|
-| `resumen.md` | Resumen legible de las ofertas del día |
-| `resumen.json` | Datos estructurados que consume el dashboard |
-| `{slug}_carta.md` | Cartas generadas bajo demanda desde el dashboard |
+| `resumen.md` | Resumen legible |
+| `resumen.json` | Datos que consume el dashboard |
+| `{slug}_carta.md` | Cartas generadas bajo demanda |
 
-## ⚙️ Configuración
+---
+
+## Configuración
 
 Variables en `.env` (ver `.env.example`):
 
 | Variable | Descripción |
 |---|---|
-| `OLLAMA_MODEL` | Modelo de Ollama en local (por defecto `llama3`) |
-| `OLLAMA_BASE_URL` | URL de Ollama (por defecto `http://localhost:11434`) |
-| `GROQ_API_KEY` | Si existe, se usa Groq en lugar de Ollama (producción) |
-| `GROQ_MODEL` | Modelo de Groq (por defecto `llama-3.1-8b-instant`) |
-| `INFOJOBS_CLIENT_ID` / `INFOJOBS_CLIENT_SECRET` | Credenciales de la [API oficial de InfoJobs](https://developer.infojobs.net/) |
-| `MAX_OFFERS_PER_RUN` | Tope de ofertas en el resumen (las nuevas nunca quedan fuera) |
-| `ADMIN_TOKEN` | Token para las acciones de escritura del dashboard en producción |
-| `BLOB_READ_WRITE_TOKEN` | Persistencia en Vercel Blob (solo producción) |
-| `EMAIL_*` | SMTP para el envío opcional del resumen por email |
+| `OLLAMA_MODEL` | Modelo Ollama en local (default: `llama3`) |
+| `OLLAMA_BASE_URL` | URL de Ollama (default: `http://localhost:11434`) |
+| `GROQ_API_KEY` | Si existe, activa Groq en lugar de Ollama |
+| `GROQ_MODEL` | Modelo Groq (default: `llama-3.1-8b-instant`) |
+| `INFOJOBS_CLIENT_ID / SECRET` | [API oficial InfoJobs](https://developer.infojobs.net/) |
+| `MAX_OFFERS_PER_RUN` | Tope de ofertas (las nuevas nunca quedan fuera) |
+| `ADMIN_TOKEN` | Protege endpoints de escritura en producción |
+| `BLOB_READ_WRITE_TOKEN` | Vercel Blob (solo producción) |
+| `EMAIL_*` | SMTP para envío opcional por email |
 
-Tu perfil profesional (stack, keywords de búsqueda, palabras excluidas, ciudad) se configura en [`src/config/profile.js`](src/config/profile.js) — es lo que alimenta tanto los filtros del scraping como los prompts de las cartas.
+Tu perfil (stack, keywords, ciudad, palabras excluidas) va en [`src/config/profile.js`](src/config/profile.js) — alimenta tanto los filtros de scraping como los prompts de las cartas.
 
-## ☁️ Despliegue en Vercel
+---
 
-La app Express completa corre como una única función serverless ([`api/index.js`](api/index.js)). En producción:
+## Despliegue en Vercel
 
-- La persistencia pasa de disco a **Vercel Blob** (escrituras versionadas para consistencia inmediata)
-- El LLM pasa de Ollama a **Groq** automáticamente si existe `GROQ_API_KEY`
-- Las acciones de escritura (lanzar búsquedas, generar cartas, cambiar estados) requieren `ADMIN_TOKEN`
+La app Express completa corre como una única función serverless ([`api/index.js`](api/index.js)). En producción el código detecta el entorno y activa Vercel Blob y Groq automáticamente.
 
 ```bash
 vercel deploy --prod
 ```
 
-## 📁 Estructura
+---
+
+## Estructura
 
 ```
 ├── src/
-│   ├── scraper/        # tecnoempleo.js, infojobs.js, infojobsApi.js
-│   ├── ai/             # llm.js (adaptador Ollama/Groq), letterWriter.js, prompts.js
-│   ├── utils/          # storage, output (md+json), mailer
-│   ├── config/         # profile.js — tu perfil y criterios de búsqueda
-│   ├── index.js        # entry point del CLI
-│   └── server.js       # dashboard Express
+│   ├── scraper/        # tecnoempleo.js · infojobs.js · infojobsApi.js
+│   ├── ai/             # llm.js (adaptador) · letterWriter.js · prompts.js · scorer.js
+│   ├── utils/          # store.js · storage.js · output.js · mailer.js
+│   ├── config/         # profile.js — perfil y criterios de búsqueda
+│   ├── index.js        # entry point CLI
+│   └── server.js       # dashboard Express + API REST
 ├── public/             # SPA vanilla JS (sin framework, sin build)
 ├── api/index.js        # entry point serverless para Vercel
-├── data/seen_jobs.json # URLs ya vistas
-└── output/YYYY-MM-DD/  # resúmenes y cartas por fecha
+├── data/
+│   ├── seen_jobs.json            # URLs ya procesadas
+│   └── applications_status.json  # CRM — estado por slug
+└── output/YYYY-MM-DD/            # resúmenes y cartas por fecha
 ```
-
-## 🛠️ Stack
-
-Node.js (CommonJS) · Express · axios + cheerio · Ollama / Groq (Llama 3) · Vercel Blob · nodemailer · vanilla JS en el front
-
-## 📄 Licencia
-
-[MIT](LICENSE)
 
 ---
 
-Hecho por [Mario Minuesa](mailto:mario@minuesa.es) 
+## Licencia
+
+[MIT](LICENSE) · Mario Minuesa · [mario.minuesa@gmail.com](mailto:mario.minuesa@gmail.com)
