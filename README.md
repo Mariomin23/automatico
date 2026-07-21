@@ -7,7 +7,7 @@
 </p>
 
 <p align="center">
-  <img src="docs/screenshot.png" width="780" alt="Dashboard — historial de búsquedas, CRM de candidaturas y generación de cartas con streaming">
+  <img src="docs/automatico.jpg" width="780" alt="Dashboard — historial de búsquedas, CRM de candidaturas y generación de cartas con streaming">
 </p>
 
 <p align="center">
